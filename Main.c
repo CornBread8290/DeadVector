@@ -21,10 +21,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     RegisterClass(&wc);
 
     hWnd = CreateWindowEx(0, className, "OpenGL Render", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
-    if (!hWnd) {
-        MessageBox(NULL, "Window creation failed!", "Error", MB_ICONERROR);
-        return 0;
-    }
 
     InitOpenGL(hWnd);
 
