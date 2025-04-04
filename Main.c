@@ -42,6 +42,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         DispatchMessage(&msg);
     }
 
+
+    // Clean up OpenGL context and device context
+    hWnd = NULL;
     return (int) msg.wParam;
 }
 
@@ -59,10 +62,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             PostQuitMessage(0);
             break;
         case WM_DESTROY:
-            // Clean up OpenGL
+
             wglMakeCurrent(NULL, NULL);
             wglDeleteContext(hRC);
             ReleaseDC(hwnd, hDC);
+            hDC = NULL;
+            hRC = NULL;
             break;
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -104,7 +109,19 @@ void SetupPixelFormat(HDC hdc)
 void RenderScene()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear the screen
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Black background
+
+    glMatrixMode(GL_PROJECTION);  // Set the projection matrix
+    glLoadIdentity();  // Reset any transformations
+    gluPerspective(45.0f, (GLfloat)800 / (GLfloat)600, 0.1f, 100.0f);
+
+    glMatrixMode(GL_MODELVIEW); // Switch to modelview matrix mode
     glLoadIdentity();  // Reset any previous transformations
+    gluLookAt(0.0f, 0.0f, -5.0f,  // Camera position (x, y, z)
+          0.0f, 0.0f, 0.0f,   // Look-at point (where we're looking)
+          0.0f, 1.0f, 0.0f);  // Up direction (y-axis)
+
+
 
     SwapBuffers(hDC); // Swap buffers for double buffering
 }
