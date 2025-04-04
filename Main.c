@@ -7,10 +7,9 @@ void SetupPixelFormat(HDC hdc);
 void RenderScene();
 
 HGLRC hRC = NULL; // OpenGL Rendering Context
-HDC hDC = NULL;   // Device Context
+HDC hDC = NULL;   // Device Context no delete
 HWND hWnd = NULL;  // Window Handle
 
-// Main entry point
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     // Register the window class
@@ -21,14 +20,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     wc.lpszClassName = className;
     RegisterClass(&wc);
 
-    // Create the window
-    hWnd = CreateWindowEx(0, className, "My OpenGL Engine", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
+    hWnd = CreateWindowEx(0, className, "OpenGL Render", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
     if (!hWnd) {
         MessageBox(NULL, "Window creation failed!", "Error", MB_ICONERROR);
         return 0;
     }
 
-    // Set up OpenGL
     InitOpenGL(hWnd);
 
     // Show the window
@@ -43,7 +40,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     }
 
 
-    // Clean up OpenGL context and device context
+    // No more virussing
     hWnd = NULL;
     return (int) msg.wParam;
 }
@@ -110,17 +107,12 @@ void RenderScene()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear the screen
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Black background
-
+    
     glMatrixMode(GL_PROJECTION);  // Set the projection matrix
     glLoadIdentity();  // Reset any transformations
-    gluPerspective(45.0f, (GLfloat)800 / (GLfloat)600, 0.1f, 100.0f);
 
     glMatrixMode(GL_MODELVIEW); // Switch to modelview matrix mode
     glLoadIdentity();  // Reset any previous transformations
-    gluLookAt(0.0f, 0.0f, -5.0f,  // Camera position (x, y, z)
-          0.0f, 0.0f, 0.0f,   // Look-at point (where we're looking)
-          0.0f, 1.0f, 0.0f);  // Up direction (y-axis)
-
 
 
     SwapBuffers(hDC); // Swap buffers for double buffering
