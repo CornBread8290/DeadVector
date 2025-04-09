@@ -2,18 +2,25 @@
 #include <gl/gl.h>
 #include <math.h>
 
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 HGLRC hRC = NULL; // OpenGL Rendering Context
 HDC hDC = NULL;   // Device Context
 HWND hWnd = NULL; // Window Handle
 
-float posX = -1.5f;
+float posX = 0.0f;
 float posY = 0.0f;
-float posZ = -6.0f;
+float posZ = 0.0f;
 float pitch = 0.0f;
 float yaw = 0.0f;
 float roll = 0.0f;
+
+uint8_t keyState = 0;
 
 void SetupPixelFormat(HDC hdc) {
     PIXELFORMATDESCRIPTOR pfd = {0};
@@ -28,10 +35,10 @@ void SetupPixelFormat(HDC hdc) {
     pfd.cAlphaBits = 8;
 
     int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    if (pixelFormat == 0) {
+    /*if (pixelFormat == 0) {
         MessageBox(NULL, "Failed to choose pixel format.", "Error", MB_OK | MB_ICONERROR);
         exit(1);
-    }
+    }*/
 
     if (!SetPixelFormat(hdc, pixelFormat, &pfd)) {
         MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
@@ -41,10 +48,6 @@ void SetupPixelFormat(HDC hdc) {
 
 void InitGL(HWND hwnd) {
     hDC = GetDC(hwnd);
-    if (!hDC) {
-        MessageBox(NULL, "Failed to get device context.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
 
     SetupPixelFormat(hDC);
 
@@ -93,16 +96,17 @@ void ResizeGLScene(GLsizei width, GLsizei height) {
 void RenderScene() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
-    glTranslatef(posX, posY, posZ);
 
-    glRotatef(pitch, 1.0f, 0.0f, 0.0f); // pitch: up/down on X
-    glRotatef(yaw,   0.0f, 1.0f, 0.0f); // yaw: turn left/right on Y
-    glRotatef(roll,  0.0f, 0.0f, 1.0f); // roll: spin around Z
+    glRotatef(pitch*57.2957795131 , 1.0f, 0.0f, 0.0f); // pitch: up/down on X
+    glRotatef(yaw*57.2957795131 ,   0.0f, 1.0f, 0.0f); // yaw: turn left/right on Y
+    glRotatef(roll*57.2957795131 ,  0.0f, 0.0f, 1.0f); // roll: spin around Z
+
+    glTranslatef(-posX, -posY, -posZ);
 
     glBegin(GL_TRIANGLES);
-    glVertex3f(0.0f, 1.0f, 0.0f);
-    glVertex3f(-1.0f, -1.0f, 0.0f);
-    glVertex3f(1.0f, -1.0f, 0.0f);
+    glVertex3f(0.0f, 1.0f, -5.0f);
+    glVertex3f(-1.0f, -1.0f, -5.0f);
+    glVertex3f(1.0f, -1.0f, -5.0f);
     glEnd();
 
     SwapBuffers(hDC);
@@ -122,7 +126,7 @@ void Cleanup() {
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     
-    const char *className = "OpenGLWindowClass";
+    const char *className = "OGL";
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
@@ -150,6 +154,27 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
+
+        if (keyState & 0x01) {  // W key pressed
+            posX += 0.1f * sinf(yaw);  // Move forward
+            posZ -= 0.1f * cosf(yaw);  // Move forward
+        }
+        
+        if (keyState & 0x02) {  // A key pressed
+            posX -= 0.1f * cosf(yaw);  // Move left
+            posZ -= 0.1f * sinf(yaw);  // Move left
+        }
+        
+        if (keyState & 0x04) {  // S key pressed
+            posX -= 0.1f * sinf(yaw);  // Move backward
+            posZ += 0.1f * cosf(yaw);  // Move backward
+        }
+        
+        if (keyState & 0x08) {  // D key pressed
+            posX += 0.1f * cosf(yaw);  // Move right
+            posZ += 0.1f * sinf(yaw);  // Move right
+        }
+        
         RenderScene();
     }
 
@@ -172,25 +197,32 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_DESTROY:
             Cleanup();
             break;
-        case WM_KEYDOWN:
-            switch (wParam) {
-                case VK_ESCAPE:ShowCursor(TRUE); ReleaseCapture();break;
-                case 'W': posZ+=0.2f; break;
-                case 'A': posX+=0.2f; break;
-                case 'S': posZ-=0.2f; break;
-                case 'D': posX-=0.2f; break;
-
-            }
-            break;
-        /*case WM_KEYUP:
-            switch (wParam) {
-                case 'W': wPressed = false; break;
-                case 'A': aPressed = false; break;
-                case 'S': sPressed = false; break;
-                case 'D': dPressed = false; break;
-            }
-        break;*/
-        case WM_MOUSEMOVE: {
+            case WM_KEYDOWN:
+            case WM_KEYUP:
+                {
+                    int keyBit = 0;
+                    switch (wParam) {
+                        case 'W': keyBit = 0x01; break;
+                        case 'A': keyBit = 0x02; break;
+                        case 'S': keyBit = 0x04; break;
+                        case 'D': keyBit = 0x08; break;
+                        case VK_ESCAPE: 
+                            ShowCursor(TRUE);
+                            ReleaseCapture();
+                            break;
+                        default:
+                         break; 
+                    }
+                    if (keyBit) {
+                        if (uMsg == WM_KEYDOWN) {
+                            keyState |= keyBit; //Set
+                        } else if (uMsg == WM_KEYUP) {
+                            keyState &= ~keyBit; //Clear
+                        }
+                    }
+                }
+                break;
+        case WM_MOUSEMOVE: 
         RECT windowRect;
         GetClientRect(hwnd, &windowRect);
         int centerX = (windowRect.left + windowRect.right) / 2;
@@ -202,12 +234,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         int deltaX = LOWORD(lParam) - centerX;
         int deltaY = HIWORD(lParam) - centerY;
-        yaw += deltaX * 0.1f;
-        pitch -= deltaY * 0.1f;
+        yaw += deltaX * 0.001f;
+        pitch += deltaY * 0.001f;
         break;
-        }
-
-        break;
+        
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
