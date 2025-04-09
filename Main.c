@@ -20,7 +20,7 @@ float pitch = 0.0f;
 float yaw = 0.0f;
 float roll = 0.0f;
 
-uint8_t keyState = 0;
+uint16_t keyState = 0;
 
 void SetupPixelFormat(HDC hdc) {
     PIXELFORMATDESCRIPTOR pfd = {0};
@@ -44,28 +44,6 @@ void SetupPixelFormat(HDC hdc) {
         MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
         exit(1);
     }
-}
-
-void InitGL(HWND hwnd) {
-    hDC = GetDC(hwnd);
-
-    SetupPixelFormat(hDC);
-
-    hRC = wglCreateContext(hDC);
-    if (!hRC) {
-        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-
-    if (!wglMakeCurrent(hDC, hRC)) {
-        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-
-    glShadeModel(GL_SMOOTH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
 }
 
 void ResizeGLScene(GLsizei width, GLsizei height) {
@@ -145,8 +123,30 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         return 1;
     }
 
-    InitGL(hWnd);
+//INITGL     
+    hDC = GetDC(hwnd);
+    SetupPixelFormat(hDC);
 
+    hRC = wglCreateContext(hDC);
+    if (!hRC) {
+        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    if (!wglMakeCurrent(hDC, hRC)) {
+        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    glShadeModel(GL_SMOOTH);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+
+
+
+
+    
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
 
@@ -206,6 +206,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         case 'A': keyBit = 0x02; break;
                         case 'S': keyBit = 0x04; break;
                         case 'D': keyBit = 0x08; break;
+                        case 'Q': keyBit = 0x16; break;
+                        case 'E': keyBit = 0x32; break;
+                        case VK_LSHIFT: keyBit = 0x64; break;
+                        case VK_LCONTROL: keyBit = 0x128; break;
+
                         case VK_ESCAPE: 
                             ShowCursor(TRUE);
                             ReleaseCapture();
@@ -216,7 +221,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     if (keyBit) {
                         if (uMsg == WM_KEYDOWN) {
                             keyState |= keyBit; //Set
-                        } else if (uMsg == WM_KEYUP) {
+                        } else {
                             keyState &= ~keyBit; //Clear
                         }
                     }
@@ -241,6 +246,5 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
-    
     return 0;
 }
