@@ -1,16 +1,21 @@
 #include <windows.h>
 #include <gl/gl.h>
+#include <math.h>
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-
 HGLRC hRC = NULL; // OpenGL Rendering Context
 HDC hDC = NULL;   // Device Context
-HWND hWnd = NULL;  // Window Handle
+HWND hWnd = NULL; // Window Handle
 
+float posX = -1.5f;
+float posY = 0.0f;
+float posZ = -6.0f;
+float pitch = 0.0f;
+float yaw = 0.0f;
+float roll = 0.0f;
 
-void SetupPixelFormat(HDC hdc)
-{
+void SetupPixelFormat(HDC hdc) {
     PIXELFORMATDESCRIPTOR pfd = {0};
     pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);
     pfd.nVersion = 1;
@@ -23,96 +28,189 @@ void SetupPixelFormat(HDC hdc)
     pfd.cAlphaBits = 8;
 
     int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    SetPixelFormat(hdc, pixelFormat, &pfd);
+    if (pixelFormat == 0) {
+        MessageBox(NULL, "Failed to choose pixel format.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    if (!SetPixelFormat(hdc, pixelFormat, &pfd)) {
+        MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
 }
 
-// Initialize OpenGL settings
-void InitGL(HWND hwnd)
-{
+void InitGL(HWND hwnd) {
     hDC = GetDC(hwnd);
+    if (!hDC) {
+        MessageBox(NULL, "Failed to get device context.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
     SetupPixelFormat(hDC);
 
-    hRC = wglCreateContext(hDC); // Create OpenGL Rendering Context
-    wglMakeCurrent(hDC, hRC);    // Make it current
+    hRC = wglCreateContext(hDC);
+    if (!hRC) {
+        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
 
+    if (!wglMakeCurrent(hDC, hRC)) {
+        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
 
     glShadeModel(GL_SMOOTH);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear the screen
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-
-    glEnable(GL_DEPTH_TEST); // Enable depth testing for 3D
-    glDepthFunc(GL_LEQUAL);   
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
 }
 
+void ResizeGLScene(GLsizei width, GLsizei height) {
+    if (height == 0) height = 1; // Prevent division by zero
+    glViewport(0, 0, width, height);
 
-// Basic rendering function
-void RenderScene(GLvoid)
-{
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); 
-    glLoadIdentity(); // Reset the model-view matrix
-    glTranslatef(-1.5f,0.0f,-6.0f); 
-                    
-    glBegin(GL_TRIANGLES);     // Drawing Using Triangles
-    glVertex3f( 0.0f, 1.0f, 0.0f); // Top
-    glVertex3f(-1.0f,-1.0f, 0.0f); // Bottom Left
-    glVertex3f( 1.0f,-1.0f, 0.0f); // Bottom Right
-    glEnd(); // Finished Drawing The Triangle
+    float fovY = 45.0f;
+    float aspectRatio = (float)width / (float)height;
+    float zNear = 1.0f;
+    float zFar = 100.0f;
 
-    SwapBuffers(hDC); // Swap buffers for double buffering
+    float f = 1.0f / tanf((fovY * 3.14159265358979323846f / 180.0f) / 2.0f); // Convert degrees to radians
+
+    float projectionMatrix[16] = {0};
+    projectionMatrix[0] = f / aspectRatio;
+    projectionMatrix[5] = f;
+    projectionMatrix[10] = (zFar + zNear) / (zNear - zFar);
+    projectionMatrix[11] = -1.0f;
+    projectionMatrix[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+    projectionMatrix[15] = 0.0f;
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadMatrixf(projectionMatrix); // Load the custom projection matrix
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
 }
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
-{
-    // Register the window class
+
+void RenderScene() {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glLoadIdentity();
+    glTranslatef(posX, posY, posZ);
+
+    glRotatef(pitch, 1.0f, 0.0f, 0.0f); // pitch: up/down on X
+    glRotatef(yaw,   0.0f, 1.0f, 0.0f); // yaw: turn left/right on Y
+    glRotatef(roll,  0.0f, 0.0f, 1.0f); // roll: spin around Z
+
+    glBegin(GL_TRIANGLES);
+    glVertex3f(0.0f, 1.0f, 0.0f);
+    glVertex3f(-1.0f, -1.0f, 0.0f);
+    glVertex3f(1.0f, -1.0f, 0.0f);
+    glEnd();
+
+    SwapBuffers(hDC);
+}
+
+void Cleanup() {
+    if (hRC) {
+        wglMakeCurrent(NULL, NULL);
+        wglDeleteContext(hRC);
+        hRC = NULL;
+    }
+    if (hDC) {
+        ReleaseDC(hWnd, hDC);
+        hDC = NULL;
+    }
+}
+
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    
     const char *className = "OpenGLWindowClass";
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = className;
-    RegisterClass(&wc);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 
-    hWnd = CreateWindowEx(0, className, "OpenGL Render", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
+    if (!RegisterClass(&wc)) {
+        MessageBox(NULL, "Failed to register window class.", "Error", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    hWnd = CreateWindowEx(0, className, "Dead Vector", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
+    if (!hWnd) {
+        MessageBox(NULL, "Failed to create window.", "Error", MB_OK | MB_ICONERROR);
+        return 1;
+    }
 
     InitGL(hWnd);
 
-    // Show the window
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
-    RenderScene();
 
-
-    // Main message loop
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
+        RenderScene();
     }
 
-
-    // No more virussing
-    hWnd = NULL;
-    return (int) msg.wParam;
+    Cleanup();
+    return (int)msg.wParam;
 }
 
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
-        //case WM_SIZE:
-        /*case WM_SYSCOMMAND:
-            if (wParam == SC_MINIMIZE) {
-                // Handle window minimizing if needed
-            }
-            break;*/
+        case WM_CREATE:
+            ShowCursor(FALSE);
+            SetCapture(hwnd);
+            break;
+        case WM_SIZE:
+            ResizeGLScene(LOWORD(lParam), HIWORD(lParam));
+            break;
         case WM_CLOSE:
             PostQuitMessage(0);
             break;
         case WM_DESTROY:
-
-            wglMakeCurrent(NULL, NULL);
-            wglDeleteContext(hRC);
-            ReleaseDC(hwnd, hDC);
-            hDC = NULL;
-            hRC = NULL;
+            Cleanup();
             break;
+        case WM_KEYDOWN:
+            switch (wParam) {
+                case VK_ESCAPE:ShowCursor(TRUE); ReleaseCapture();break;
+                case 'W': posZ+=0.2f; break;
+                case 'A': posX+=0.2f; break;
+                case 'S': posZ-=0.2f; break;
+                case 'D': posX-=0.2f; break;
+
+            }
+            break;
+        /*case WM_KEYUP:
+            switch (wParam) {
+                case 'W': wPressed = false; break;
+                case 'A': aPressed = false; break;
+                case 'S': sPressed = false; break;
+                case 'D': dPressed = false; break;
+            }
+        break;*/
+        case WM_MOUSEMOVE: {
+        RECT windowRect;
+        GetClientRect(hwnd, &windowRect);
+        int centerX = (windowRect.left + windowRect.right) / 2;
+        int centerY = (windowRect.top + windowRect.bottom) / 2;
+
+        POINT centerScreen = {centerX, centerY};
+        ClientToScreen(hwnd, &centerScreen);
+        SetCursorPos(centerScreen.x, centerScreen.y);
+
+        int deltaX = LOWORD(lParam) - centerX;
+        int deltaY = HIWORD(lParam) - centerY;
+        yaw += deltaX * 0.1f;
+        pitch -= deltaY * 0.1f;
+        break;
+        }
+
+        break;
+        default:
+            return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    
+    return 0;
 }
