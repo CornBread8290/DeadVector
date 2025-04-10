@@ -22,51 +22,6 @@ float roll = 0.0f;
 
 uint16_t keyState = 0;
 
-void SetupPixelFormat(HDC hdc) {
-    PIXELFORMATDESCRIPTOR pfd = {0};
-    pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-    pfd.cRedBits = 8;
-    pfd.cGreenBits = 8;
-    pfd.cBlueBits = 8;
-    pfd.cAlphaBits = 8;
-
-    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    /*if (pixelFormat == 0) {
-        MessageBox(NULL, "Failed to choose pixel format.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }*/
-
-    if (!SetPixelFormat(hdc, pixelFormat, &pfd)) {
-        MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-}
-
-void InitGL(HWND hwnd) {
-    hDC = GetDC(hwnd);
-
-    SetupPixelFormat(hDC);
-
-    hRC = wglCreateContext(hDC);
-    if (!hRC) {
-        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-
-    if (!wglMakeCurrent(hDC, hRC)) {
-        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-
-    glShadeModel(GL_SMOOTH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-}
 
 void ResizeGLScene(GLsizei width, GLsizei height) {
     if (height == 0) height = 1; // Prevent division by zero
@@ -203,7 +158,44 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         return 1;
     }
 
-    InitGL(hWnd);
+    //OpenGL initialization
+    hDC = GetDC(hWnd);
+
+    PIXELFORMATDESCRIPTOR pfd = {0};
+    pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.cRedBits = 8;
+    pfd.cGreenBits = 8;
+    pfd.cBlueBits = 8;
+    pfd.cAlphaBits = 8;
+
+    int pixelFormat = ChoosePixelFormat(hDC, &pfd);
+
+    if (!SetPixelFormat(hDC, pixelFormat, &pfd)) {
+        MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    hRC = wglCreateContext(hDC);
+    if (!hRC) {
+        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    if (!wglMakeCurrent(hDC, hRC)) {
+        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    glShadeModel(GL_SMOOTH);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+
+    // End of OpenGL initialization
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
@@ -244,6 +236,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         case 'A': keyBit = 0x02; break;
                         case 'S': keyBit = 0x04; break;
                         case 'D': keyBit = 0x08; break;
+                        case 'Q': keyBit = 0x10; break;
+                        case 'E': keyBit = 0x20; break;
+                        case VK_LSHIFT: keyBit = 0x40; break;
+                        case VK_LCONTROL: keyBit = 0x80; break;
                         case VK_ESCAPE: 
                             ShowCursor(TRUE);
                             ReleaseCapture();
@@ -254,7 +250,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     if (keyBit) {
                         if (uMsg == WM_KEYDOWN) {
                             keyState |= keyBit; //Set
-                        } else {
+                        } else if (uMsg == WM_KEYUP) {
                             keyState &= ~keyBit; //Clear
                         }
                     }
@@ -279,5 +275,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
+    
     return 0;
 }
