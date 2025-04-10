@@ -9,9 +9,9 @@ typedef unsigned int uint32_t;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-HGLRC hRC = NULL; // OpenGL Rendering Context
-HDC hDC = NULL;   // Device Context
-HWND hWnd = NULL; // Window Handle
+HGLRC hRC; // OpenGL Rendering Context
+HDC hDC;   // Device Context
+HWND hWnd; // Window Handle
 
 float posX = 0.0f;
 float posY = 0.0f;
@@ -20,53 +20,8 @@ float pitch = 0.0f;
 float yaw = 0.0f;
 float roll = 0.0f;
 
-uint8_t keyState = 0;
+uint16_t keyState = 0;
 
-void SetupPixelFormat(HDC hdc) {
-    PIXELFORMATDESCRIPTOR pfd = {0};
-    pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-    pfd.cRedBits = 8;
-    pfd.cGreenBits = 8;
-    pfd.cBlueBits = 8;
-    pfd.cAlphaBits = 8;
-
-    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    /*if (pixelFormat == 0) {
-        MessageBox(NULL, "Failed to choose pixel format.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }*/
-
-    if (!SetPixelFormat(hdc, pixelFormat, &pfd)) {
-        MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-}
-
-void InitGL(HWND hwnd) {
-    hDC = GetDC(hwnd);
-
-    SetupPixelFormat(hDC);
-
-    hRC = wglCreateContext(hDC);
-    if (!hRC) {
-        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-
-    if (!wglMakeCurrent(hDC, hRC)) {
-        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
-
-    glShadeModel(GL_SMOOTH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-}
 
 void ResizeGLScene(GLsizei width, GLsizei height) {
     if (height == 0) height = 1; // Prevent division by zero
@@ -97,12 +52,69 @@ void RenderScene() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
 
-    glRotatef(pitch*57.2957795131 , 1.0f, 0.0f, 0.0f); // pitch: up/down on X
-    glRotatef(yaw*57.2957795131 ,   0.0f, 1.0f, 0.0f); // yaw: turn left/right on Y
-    glRotatef(roll*57.2957795131 ,  0.0f, 0.0f, 1.0f); // roll: spin around Z
+    float DEG2RAD = 0.0174532925f;
 
-    glTranslatef(-posX, -posY, -posZ);
+    float cy = cosf(yaw * DEG2RAD); // Convert yaw to radians
+    float sy = sinf(yaw * DEG2RAD); // Convert yaw to radians
+    float cp = cosf(pitch * DEG2RAD); // Convert pitch to radians
+    float sp = sinf(pitch * DEG2RAD); // Convert pitch to radians
+    float cr = cosf(roll * DEG2RAD); // Convert roll to radians
+    float sr = sinf(roll * DEG2RAD); // Convert roll to radians
 
+    // Forward vector
+    float fx = sy * cp;
+    float fy = -sp;
+    float fz = -cy * cp;
+
+    // Right vector
+    float rx = cy * cr + sy * sp * sr;
+    float ry = cp * sr;
+    float rz = sy * cr - cy * sp * sr;
+
+    // Up vector
+    float ux = cy * -sr + sy * sp * cr;
+    float uy = cp * cr;
+    float uz = sy * -sr - cy * sp * cr;
+
+    if (keyState & 0x01) {  // W
+        posX += fx * 0.1f;
+        posY += fy * 0.1f;
+        posZ += fz * 0.1f;
+    }
+    if (keyState & 0x04) {  // S
+        posX -= fx * 0.1f;
+        posY -= fy * 0.1f;
+        posZ -= fz * 0.1f;
+    }
+    if (keyState & 0x02) {  // A
+        posX -= rx * 0.1f;
+        posY -= ry * 0.1f;
+        posZ -= rz * 0.1f;
+    }
+    if (keyState & 0x08) {  // D
+        posX += rx * 0.1f;
+        posY += ry * 0.1f;
+        posZ += rz * 0.1f;
+    }
+    
+    if (keyState & 0x10) {  // Q key pressed
+        roll += 0.1f; // Roll left
+    }
+    if (keyState & 0x20) {  // E key pressed
+        roll -= 0.1f; // Roll right
+    }
+
+
+    float viewMatrix[16] = {
+        rx,  ry,  rz,  0,
+        ux,  uy,  uz,  0,
+        -fx, -fy, -fz, 0,
+        -(rx * posX + ux * posY + (-fx) * posZ),
+        -(ry * posX + uy * posY + (-fy) * posZ),
+        -(rz * posX + uz * posY + (-fz) * posZ),
+        1
+    };
+    glMultMatrixf(viewMatrix);
     glBegin(GL_TRIANGLES);
     glVertex3f(0.0f, 1.0f, -5.0f);
     glVertex3f(-1.0f, -1.0f, -5.0f);
@@ -110,6 +122,7 @@ void RenderScene() {
     glEnd();
 
     SwapBuffers(hDC);
+
 }
 
 void Cleanup() {
@@ -145,7 +158,44 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         return 1;
     }
 
-    InitGL(hWnd);
+    //OpenGL initialization
+    hDC = GetDC(hWnd);
+
+    PIXELFORMATDESCRIPTOR pfd = {0};
+    pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.cRedBits = 8;
+    pfd.cGreenBits = 8;
+    pfd.cBlueBits = 8;
+    pfd.cAlphaBits = 8;
+
+    int pixelFormat = ChoosePixelFormat(hDC, &pfd);
+
+    if (!SetPixelFormat(hDC, pixelFormat, &pfd)) {
+        MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    hRC = wglCreateContext(hDC);
+    if (!hRC) {
+        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    if (!wglMakeCurrent(hDC, hRC)) {
+        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+
+    glShadeModel(GL_SMOOTH);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+
+    // End of OpenGL initialization
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
@@ -155,26 +205,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         TranslateMessage(&msg);
         DispatchMessage(&msg);
 
-        if (keyState & 0x01) {  // W key pressed
-            posX += 0.1f * sinf(yaw);  // Move forward
-            posZ -= 0.1f * cosf(yaw);  // Move forward
-        }
-        
-        if (keyState & 0x02) {  // A key pressed
-            posX -= 0.1f * cosf(yaw);  // Move left
-            posZ -= 0.1f * sinf(yaw);  // Move left
-        }
-        
-        if (keyState & 0x04) {  // S key pressed
-            posX -= 0.1f * sinf(yaw);  // Move backward
-            posZ += 0.1f * cosf(yaw);  // Move backward
-        }
-        
-        if (keyState & 0x08) {  // D key pressed
-            posX += 0.1f * cosf(yaw);  // Move right
-            posZ += 0.1f * sinf(yaw);  // Move right
-        }
-        
         RenderScene();
     }
 
@@ -206,6 +236,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         case 'A': keyBit = 0x02; break;
                         case 'S': keyBit = 0x04; break;
                         case 'D': keyBit = 0x08; break;
+                        case 'Q': keyBit = 0x10; break;
+                        case 'E': keyBit = 0x20; break;
+                        case VK_LSHIFT: keyBit = 0x40; break;
+                        case VK_LCONTROL: keyBit = 0x80; break;
                         case VK_ESCAPE: 
                             ShowCursor(TRUE);
                             ReleaseCapture();
