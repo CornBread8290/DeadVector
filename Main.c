@@ -10,8 +10,8 @@ typedef unsigned int uint32_t;
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 HGLRC hRC; // OpenGL Rendering Context
-HDC hDC;   // Device Context
-HWND hWnd; // Window Handle
+HDC hDC;   // device context
+HWND hWnd; // window handle
 
 float posX = 0.0f;
 float posY = 0.0f;
@@ -22,107 +22,7 @@ float roll = 0.0f;
 
 uint16_t keyState = 0;
 
-
-void ResizeGLScene(GLsizei width, GLsizei height) {
-    if (height == 0) height = 1; // Prevent division by zero
-    glViewport(0, 0, width, height);
-
-    float fovY = 45.0f;
-    float aspectRatio = (float)width / (float)height;
-    float zNear = 1.0f;
-    float zFar = 100.0f;
-
-    float f = 1.0f / tanf((fovY * 3.14159265358979323846f / 180.0f) / 2.0f); // Convert degrees to radians
-
-    float projectionMatrix[16] = {0};
-    projectionMatrix[0] = f / aspectRatio;
-    projectionMatrix[5] = f;
-    projectionMatrix[10] = (zFar + zNear) / (zNear - zFar);
-    projectionMatrix[11] = -1.0f;
-    projectionMatrix[14] = (2.0f * zFar * zNear) / (zNear - zFar);
-    projectionMatrix[15] = 0.0f;
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(projectionMatrix); // Load the custom projection matrix
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-}
-
 void RenderScene() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glLoadIdentity();
-
-    float DEG2RAD = 0.0174532925f;
-
-    float cy = cosf(yaw * DEG2RAD); // Convert yaw to radians
-    float sy = sinf(yaw * DEG2RAD); // Convert yaw to radians
-    float cp = cosf(pitch * DEG2RAD); // Convert pitch to radians
-    float sp = sinf(pitch * DEG2RAD); // Convert pitch to radians
-    float cr = cosf(roll * DEG2RAD); // Convert roll to radians
-    float sr = sinf(roll * DEG2RAD); // Convert roll to radians
-
-    // Forward vector
-    float fx = sy * cp;
-    float fy = -sp;
-    float fz = -cy * cp;
-
-    // Right vector
-    float rx = cy * cr + sy * sp * sr;
-    float ry = cp * sr;
-    float rz = sy * cr - cy * sp * sr;
-
-    // Up vector
-    float ux = cy * -sr + sy * sp * cr;
-    float uy = cp * cr;
-    float uz = sy * -sr - cy * sp * cr;
-
-    if (keyState & 0x01) {  // W
-        posX += fx * 0.1f;
-        posY += fy * 0.1f;
-        posZ += fz * 0.1f;
-    }
-    if (keyState & 0x04) {  // S
-        posX -= fx * 0.1f;
-        posY -= fy * 0.1f;
-        posZ -= fz * 0.1f;
-    }
-    if (keyState & 0x02) {  // A
-        posX -= rx * 0.1f;
-        posY -= ry * 0.1f;
-        posZ -= rz * 0.1f;
-    }
-    if (keyState & 0x08) {  // D
-        posX += rx * 0.1f;
-        posY += ry * 0.1f;
-        posZ += rz * 0.1f;
-    }
-    
-    if (keyState & 0x10) {  // Q key pressed
-        roll += 0.1f; // Roll left
-    }
-    if (keyState & 0x20) {  // E key pressed
-        roll -= 0.1f; // Roll right
-    }
-
-
-    float viewMatrix[16] = {
-        rx,  ry,  rz,  0,
-        ux,  uy,  uz,  0,
-        -fx, -fy, -fz, 0,
-        -(rx * posX + ux * posY + (-fx) * posZ),
-        -(ry * posX + uy * posY + (-fy) * posZ),
-        -(rz * posX + uz * posY + (-fz) * posZ),
-        1
-    };
-    glMultMatrixf(viewMatrix);
-    glBegin(GL_TRIANGLES);
-    glVertex3f(0.0f, 1.0f, -5.0f);
-    glVertex3f(-1.0f, -1.0f, -5.0f);
-    glVertex3f(1.0f, -1.0f, -5.0f);
-    glEnd();
-
-    SwapBuffers(hDC);
-
 }
 
 void Cleanup() {
@@ -205,7 +105,81 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         TranslateMessage(&msg);
         DispatchMessage(&msg);
 
-        RenderScene();
+        
+//render
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glLoadIdentity();
+
+        float DEG2RAD = 0.0174532925f;
+
+        float cy = cosf(yaw * DEG2RAD); // Convert yaw to radians
+        float sy = sinf(yaw * DEG2RAD); // Convert yaw to radians
+        float cp = cosf(pitch * DEG2RAD); // Convert pitch to radians
+        float sp = sinf(pitch * DEG2RAD); // Convert pitch to radians
+        float cr = cosf(roll * DEG2RAD); // Convert roll to radians
+        float sr = sinf(roll * DEG2RAD); // Convert roll to radians
+
+        // Forward vector
+        float fx = sy * cp;
+        float fy = -sp;
+        float fz = -cy * cp;
+
+        // Right vector
+        float rx = cy * cr + sy * sp * sr;
+        float ry = cp * sr;
+        float rz = sy * cr - cy * sp * sr;
+
+        // Up vector
+        float ux = cy * -sr + sy * sp * cr;
+        float uy = cp * cr;
+        float uz = sy * -sr - cy * sp * cr;
+
+        if (keyState & 0x01) {  // W
+            posX += fx * 0.1f;
+            posY += fy * 0.1f;
+            posZ += fz * 0.1f;
+        }
+        if (keyState & 0x04) {  // S
+            posX -= fx * 0.1f;
+            posY -= fy * 0.1f;
+            posZ -= fz * 0.1f;
+        }
+        if (keyState & 0x02) {  // A
+            posX -= rx * 0.1f;
+            posY -= ry * 0.1f;
+            posZ -= rz * 0.1f;
+        }
+        if (keyState & 0x08) {  // D
+            posX += rx * 0.1f;
+            posY += ry * 0.1f;
+            posZ += rz * 0.1f;
+        }
+    
+        if (keyState & 0x10) {  // Q key pressed
+            roll += 0.1f; // Roll left
+        }
+        if (keyState & 0x20) {  // E key pressed
+            roll -= 0.1f; // Roll right
+        }
+
+
+        float viewMatrix[16] = {
+            rx,  ry,  rz,  0,
+            ux,  uy,  uz,  0,
+            -fx, -fy, -fz, 0,
+            -(rx * posX + ux * posY + (-fx) * posZ),
+            -(ry * posX + uy * posY + (-fy) * posZ),
+            -(rz * posX + uz * posY + (-fz) * posZ),
+            1
+        };
+        glMultMatrixf(viewMatrix);
+        glBegin(GL_TRIANGLES);
+        glVertex3f(0.0f, 1.0f, -5.0f);
+        glVertex3f(-1.0f, -1.0f, -5.0f);
+        glVertex3f(1.0f, -1.0f, -5.0f);
+        glEnd();
+
+        SwapBuffers(hDC);
     }
 
     Cleanup();
@@ -219,7 +193,28 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             SetCapture(hwnd);
             break;
         case WM_SIZE:
-            ResizeGLScene(LOWORD(lParam), HIWORD(lParam));
+            if (height == 0) height = 1; // Prevent division by zero
+            glViewport(0, 0, width, height);
+
+            float fovY = 45.0f;
+            float aspectRatio = (float)width / (float)height;
+            float zNear = 1.0f;
+            float zFar = 100.0f;
+
+            float f = 1.0f / tanf((fovY * 3.14159265358979323846f / 180.0f) / 2.0f); // Convert degrees to radians
+
+            float projectionMatrix[16] = {0};
+            projectionMatrix[0] = f / aspectRatio;
+            projectionMatrix[5] = f;
+            projectionMatrix[10] = (zFar + zNear) / (zNear - zFar);
+            projectionMatrix[11] = -1.0f;
+            projectionMatrix[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+            projectionMatrix[15] = 0.0f;
+
+            glMatrixMode(GL_PROJECTION);
+            glLoadMatrixf(projectionMatrix); // Load the custom projection matrix
+            glMatrixMode(GL_MODELVIEW);
+            glLoadIdentity();
             break;
         case WM_CLOSE:
             PostQuitMessage(0);
