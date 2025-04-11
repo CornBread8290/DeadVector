@@ -6,7 +6,6 @@ typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
 
-
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 HGLRC hRC; // OpenGL Rendering Context
@@ -21,9 +20,6 @@ float yaw = 0.0f;
 float roll = 0.0f;
 
 uint16_t keyState = 0;
-
-void RenderScene() {
-}
 
 void Cleanup() {
     if (hRC) {
@@ -270,6 +266,5 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
-    
     return 0;
 }
