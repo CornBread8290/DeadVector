@@ -6,33 +6,122 @@ typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
 
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+typedef struct { float x, y, z; } Vec3;
+typedef struct { float x, y, z, w; } Quat;
 
 HGLRC hRC; // OpenGL Rendering Context
 HDC hDC;   // Device Context
 HWND hWnd; // Window Handle
 
-float posX = 0.0f;
-float posY = 0.0f;
-float posZ = 0.0f;
-float pitch = 0.0f;
-float yaw = 0.0f;
-float roll = 0.0f;
-
 uint16_t keyState = 0;
+#define pi 3.14159265358979323846f
+#define pi2 (pi * 2.0f)
 
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+Quat rot = {0.0f, 0.0f, 0.0f, 1.0f};
+Vec3 pos = {0.0f, 0.0f, 0.0f};
+
+
+
+Quat quat_mul(Quat a, Quat b) {
+    Quat q;
+    q.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
+    q.x = a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y;
+    q.y = a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x;
+    q.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
+    return q;
+}
+Quat quat_axis_angle(float x, float y, float z, float angle_rad) {
+    float s = sinf(angle_rad * 0.5f);
+    Quat q;
+    q.x = x * s;
+    q.y = y * s;
+    q.z = z * s;
+    q.w = cosf(angle_rad * 0.5f);
+    return q;
+}
+Quat quat_normalize(Quat q) {
+    float mag = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
+    q.x /= mag;
+    q.y /= mag;
+    q.z /= mag;
+    q.w /= mag;
+    return q;
+}
+void quat_to_matrix(const Quat* q, float* m) {
+    float x2 = q->x + q->x, y2 = q->y + q->y, z2 = q->z + q->z;
+    float xx = q->x * x2, yy = q->y * y2, zz = q->z * z2;
+    float xy = q->x * y2, xz = q->x * z2, yz = q->y * z2;
+    float wx = q->w * x2, wy = q->w * y2, wz = q->w * z2;
+
+    m[0] = 1.0f - (yy + zz);
+    m[1] = xy + wz;
+    m[2] = xz - wy;
+    m[3] = 0.0f;
+
+    m[4] = xy - wz;
+    m[5] = 1.0f - (xx + zz);
+    m[6] = yz + wx;
+    m[7] = 0.0f;
+
+    m[8]  = xz + wy;
+    m[9]  = yz - wx;
+    m[10] = 1.0f - (xx + yy);
+    m[11] = 0.0f;
+
+    m[12] = m[13] = m[14] = 0.0f;
+    m[15] = 1.0f;
+}
+Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
+    // q * v * conj(q)
+    Vec3 out;
+    
+    // Extract the vector part of the quaternion
+    Vec3 u = { q.x, q.y, q.z };
+    
+    // Cross products
+    Vec3 uv = {
+        u.y * v.z - u.z * v.y,
+        u.z * v.x - u.x * v.z,
+        u.x * v.y - u.y * v.x
+    };
+    
+    Vec3 uuv = {
+        u.y * uv.z - u.z * uv.y,
+        u.z * uv.x - u.x * uv.z,
+        u.x * uv.y - u.y * uv.x
+    };
+
+    // Apply rotation
+    uv.x *= 2.0f * q.w;
+    uv.y *= 2.0f * q.w;
+    uv.z *= 2.0f * q.w;
+
+    uuv.x *= 2.0f;
+    uuv.y *= 2.0f;
+    uuv.z *= 2.0f;
+
+    out.x = v.x + uv.x + uuv.x;
+    out.y = v.y + uv.y + uuv.y;
+    out.z = v.z + uv.z + uuv.z;
+
+    return out;
+}
+Quat quat_conjugate(Quat q) {
+    return (Quat){ -q.x, -q.y, -q.z, q.w };
+}
 
 void ResizeGLScene(GLsizei width, GLsizei height) {
     if (height == 0) height = 1; // Prevent division by zero
     glViewport(0, 0, width, height);
 
-    float fovY = 45.0f;
+    float fovY = 90.0f;
     float aspectRatio = (float)width / (float)height;
     float zNear = 1.0f;
-    float zFar = 100.0f;
+    float zFar = 10000000000000.0f;
 
-    float f = 1.0f / tanf((fovY * 3.14159265358979323846f / 180.0f) / 2.0f); // Convert degrees to radians
+    float f = 1.0f / tanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
 
     float projectionMatrix[16] = {0};
     projectionMatrix[0] = f / aspectRatio;
@@ -48,83 +137,6 @@ void ResizeGLScene(GLsizei width, GLsizei height) {
     glLoadIdentity();
 }
 
-void RenderScene() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glLoadIdentity();
-
-    float DEG2RAD = 0.0174532925f;
-
-    float cy = cosf(yaw * DEG2RAD); // Convert yaw to radians
-    float sy = sinf(yaw * DEG2RAD); // Convert yaw to radians
-    float cp = cosf(pitch * DEG2RAD); // Convert pitch to radians
-    float sp = sinf(pitch * DEG2RAD); // Convert pitch to radians
-    float cr = cosf(roll * DEG2RAD); // Convert roll to radians
-    float sr = sinf(roll * DEG2RAD); // Convert roll to radians
-
-    // Forward vector
-    float fx = sy * cp;
-    float fy = -sp;
-    float fz = -cy * cp;
-
-    // Right vector
-    float rx = cy * cr + sy * sp * sr;
-    float ry = cp * sr;
-    float rz = sy * cr - cy * sp * sr;
-
-    // Up vector
-    float ux = cy * -sr + sy * sp * cr;
-    float uy = cp * cr;
-    float uz = sy * -sr - cy * sp * cr;
-
-    if (keyState & 0x01) {  // W
-        posX += fx * 0.1f;
-        posY += fy * 0.1f;
-        posZ += fz * 0.1f;
-    }
-    if (keyState & 0x04) {  // S
-        posX -= fx * 0.1f;
-        posY -= fy * 0.1f;
-        posZ -= fz * 0.1f;
-    }
-    if (keyState & 0x02) {  // A
-        posX -= rx * 0.1f;
-        posY -= ry * 0.1f;
-        posZ -= rz * 0.1f;
-    }
-    if (keyState & 0x08) {  // D
-        posX += rx * 0.1f;
-        posY += ry * 0.1f;
-        posZ += rz * 0.1f;
-    }
-    
-    if (keyState & 0x10) {  // Q key pressed
-        roll += 0.1f; // Roll left
-    }
-    if (keyState & 0x20) {  // E key pressed
-        roll -= 0.1f; // Roll right
-    }
-
-
-    float viewMatrix[16] = {
-        rx,  ry,  rz,  0,
-        ux,  uy,  uz,  0,
-        -fx, -fy, -fz, 0,
-        -(rx * posX + ux * posY + (-fx) * posZ),
-        -(ry * posX + uy * posY + (-fy) * posZ),
-        -(rz * posX + uz * posY + (-fz) * posZ),
-        1
-    };
-    glMultMatrixf(viewMatrix);
-    glBegin(GL_TRIANGLES);
-    glVertex3f(0.0f, 1.0f, -5.0f);
-    glVertex3f(-1.0f, -1.0f, -5.0f);
-    glVertex3f(1.0f, -1.0f, -5.0f);
-    glEnd();
-
-    SwapBuffers(hDC);
-
-}
-
 void Cleanup() {
     if (hRC) {
         wglMakeCurrent(NULL, NULL);
@@ -137,6 +149,35 @@ void Cleanup() {
     }
 }
 
+
+
+
+#define NUM_STARS 64
+float star_positions[NUM_STARS][3];
+
+// Tiny PRNG
+static uint32_t seed = 12355;
+uint32_t xorshift32() {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return seed;
+}
+
+void init_stars() {
+    float dist = 100.0f;
+
+    for (int i = 0; i < NUM_STARS; ++i) {
+        float theta = (xorshift32() / 4294967295.0f) * pi2;  // 4294967295 = 2³²-1
+        float phi = (xorshift32() / 4294967295.0f) * pi;
+        float sin_phi = sinf(phi);
+        
+        star_positions[i][0] = dist * sin_phi * cosf(theta);
+        star_positions[i][1] = dist * sin_phi * sinf(theta);
+        star_positions[i][2] = dist * cosf(phi);    }
+}
+
+
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     
     const char *className = "OGL";
@@ -148,15 +189,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 
     if (!RegisterClass(&wc)) {
-        MessageBox(NULL, "Failed to register window class.", "Error", MB_OK | MB_ICONERROR);
+        MessageBox(NULL, "error in register window class.", "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
 
-    hWnd = CreateWindowEx(0, className, "Dead Vector", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
-    if (!hWnd) {
-        MessageBox(NULL, "Failed to create window.", "Error", MB_OK | MB_ICONERROR);
-        return 1;
-    }
+    hWnd = CreateWindowEx(0, className, "SIGMA!", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
 
     //OpenGL initialization
     hDC = GetDC(hWnd);
@@ -174,39 +211,123 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     int pixelFormat = ChoosePixelFormat(hDC, &pfd);
 
-    if (!SetPixelFormat(hDC, pixelFormat, &pfd)) {
-        MessageBox(NULL, "Failed to set pixel format.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
+    SetPixelFormat(hDC, pixelFormat, &pfd);
 
     hRC = wglCreateContext(hDC);
-    if (!hRC) {
-        MessageBox(NULL, "Failed to create OpenGL rendering context.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
 
-    if (!wglMakeCurrent(hDC, hRC)) {
-        MessageBox(NULL, "Failed to make OpenGL rendering context current.", "Error", MB_OK | MB_ICONERROR);
-        exit(1);
-    }
+    wglMakeCurrent(hDC, hRC);
+
 
     glShadeModel(GL_SMOOTH);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
+
+    init_stars(); // Initialize star positions
 
     // End of OpenGL initialization
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
 
+    Vec3 vel = {0.0f, 0.0f, 0.0f}; 
+    Vec3 spn = {0.0f, 0.0f, 0.0f};
+    float thrust = 0.01f;
+
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        RenderScene();
-    }
+
+        Vec3 dir = {0};
+        if (keyState & 0x01) { dir.z += 1; } // W
+        if (keyState & 0x04) { dir.z -= 1; } // S
+        if (keyState & 0x02) { dir.x += 1; } // A
+        if (keyState & 0x08) { dir.x -= 1; } // D
+        if (keyState & 0x40) { dir.y -= 1; }// Shift
+        if (keyState & 0x80) { dir.y += 1; }// Ctrl   
+
+
+        Quat invRot = quat_conjugate(rot);
+        Vec3 worldDir = quat_rotate_vec3(invRot, dir);
+
+        vel.x += worldDir.x * thrust;
+        vel.y += worldDir.y * thrust;
+        vel.z += worldDir.z * thrust;
+
+        pos.x -= vel.x;
+        pos.y -= vel.y;
+        pos.z -= vel.z;
+        
+        if (keyState & 0x10) {  // Q
+            Quat dq = quat_axis_angle(0, 0, 1, -0.02);
+            rot = quat_mul(dq, rot);
+        }
+        if (keyState & 0x20) {  // E
+          Quat dq = quat_axis_angle(0, 0, 1, 0.02);
+         rot = quat_mul(dq, rot);
+        }
+    
+
+
+
+        glLoadIdentity();
+
+        rot = quat_normalize(rot); // keep it tight, babe 💅
+        
+        float mat[16];
+        quat_to_matrix(&rot, mat);
+        
+        glDisable(GL_DEPTH_TEST);
+
+        glBegin(GL_LINES);
+        glLineWidth(100.0f);
+        glColor3f(0.5f, 0.5f, 0.5f);
+        glVertex3f(-1.0f, 0.0f, -2.0f);
+        glVertex3f(1.0f, 0.0f, -2.0f);
+        glEnd();
+
+
+
+        glMultMatrixf(mat); // rotation matrix applied
+        
+        glPointSize(2.0f); 
+        glBegin(GL_POINTS);
+        for (int i = 0; i < NUM_STARS; ++i) {
+            glColor3f(1.0f, 1.0f, 1.0f);
+            glVertex3fv(star_positions[i]);
+        }
+        glEnd();
+
+        glEnable(GL_DEPTH_TEST); 
+        glTranslatef(-pos.x, -pos.y, -pos.z);
+        
+        glPushMatrix();
+        glTranslatef(0.0f, 0.0f, -50000000000.0f); 
+        glBegin(GL_TRIANGLES);
+        glColor3f(1.0f, 0.0f, 0.0f); 
+        glVertex3f(0.0f, 10000000000.0f, 0.0f);
+        glVertex3f(-10000000000.0f, -10000000000.0f, 0.0f);
+        glVertex3f(10000000000.0f, -10000000000.0f, 0.0f);
+        glEnd();
+        glPopMatrix();
+        
+        glPushMatrix();
+        glTranslatef(0.0f, 0.0f, -5.0f);
+        glBegin(GL_TRIANGLES);
+        glColor3f(0.0f, 1.0f, 0.0f); // green 
+        glVertex3f(0.0f, 1.0f, 0.0f);
+        glVertex3f(-1.0f, -1.0f, 0.0f);
+        glVertex3f(1.0f, -1.0f, 0.0f);
+        glEnd();
+        glPopMatrix();
+        
+
+
+
+        SwapBuffers(hDC);    
+        }
 
     Cleanup();
     return (int)msg.wParam;
@@ -238,8 +359,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         case 'D': keyBit = 0x08; break;
                         case 'Q': keyBit = 0x10; break;
                         case 'E': keyBit = 0x20; break;
-                        case VK_LSHIFT: keyBit = 0x40; break;
-                        case VK_LCONTROL: keyBit = 0x80; break;
+                        case VK_SHIFT: keyBit = 0x40; break;
+                        case VK_CONTROL: keyBit = 0x80; break;
                         case VK_ESCAPE: 
                             ShowCursor(TRUE);
                             ReleaseCapture();
@@ -257,24 +378,30 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 }
                 break;
         case WM_MOUSEMOVE: 
-        RECT windowRect;
-        GetClientRect(hwnd, &windowRect);
-        int centerX = (windowRect.left + windowRect.right) / 2;
-        int centerY = (windowRect.top + windowRect.bottom) / 2;
+            RECT windowRect;
+            GetClientRect(hwnd, &windowRect);
+            int centerX = (windowRect.left + windowRect.right) / 2;
+            int centerY = (windowRect.top + windowRect.bottom) / 2;
 
-        POINT centerScreen = {centerX, centerY};
-        ClientToScreen(hwnd, &centerScreen);
-        SetCursorPos(centerScreen.x, centerScreen.y);
+            POINT centerScreen = {centerX, centerY};
+            ClientToScreen(hwnd, &centerScreen);
+            SetCursorPos(centerScreen.x, centerScreen.y);
 
-        int deltaX = LOWORD(lParam) - centerX;
-        int deltaY = HIWORD(lParam) - centerY;
-        yaw += deltaX * 0.001f;
-        pitch += deltaY * 0.001f;
-        break;
-        
+            int deltaX = LOWORD(lParam) - centerX;
+            int deltaY = HIWORD(lParam) - centerY;
+
+            Quat qPitch = quat_axis_angle(1, 0, 0, deltaY*0.01); // local X
+            Quat qYaw   = quat_axis_angle(0, 1, 0, deltaX*0.01);   // local Y
+
+            rot = quat_mul(qYaw, rot);   // Yaw first
+            rot = quat_mul(qPitch, rot); // Then pitch
+
+
+
+            break;
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
-    
+
     return 0;
 }
