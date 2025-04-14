@@ -241,12 +241,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 
         Vec3 dir = {0};
-        if (keyState & 0x01) { dir.z += 1; } // W
-        if (keyState & 0x04) { dir.z -= 1; } // S
-        if (keyState & 0x02) { dir.x += 1; } // A
-        if (keyState & 0x08) { dir.x -= 1; } // D
-        if (keyState & 0x40) { dir.y -= 1; }// Shift
-        if (keyState & 0x80) { dir.y += 1; }// Ctrl   
+        if (keyState & 0x01) { dir.z -= 1; } // W
+        if (keyState & 0x04) { dir.z += 1; } // S
+        if (keyState & 0x02) { dir.x -= 1; } // A
+        if (keyState & 0x08) { dir.x += 1; } // D
+        if (keyState & 0x40) { dir.y += 1; }// Shift
+        if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
 
 
         Quat invRot = quat_conjugate(rot);
@@ -256,9 +256,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         vel.y += worldDir.y * thrust;
         vel.z += worldDir.z * thrust;
 
-        pos.x -= vel.x;
-        pos.y -= vel.y;
-        pos.z -= vel.z;
+        pos.x += vel.x;
+        pos.y += vel.y;
+        pos.z += vel.z;
         
         if (keyState & 0x10) {  // Q
             Quat dq = quat_axis_angle(0, 0, 1, -0.02);
@@ -288,16 +288,16 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glVertex3f(1.0f, 0.0f, -2.0f);
         glEnd();
 
-
-
         glMultMatrixf(mat); // rotation matrix applied
         
         glPointSize(2.0f); 
         glBegin(GL_POINTS);
+        glColor3f(1.0f, 1.0f, 1.0f);
         for (int i = 0; i < NUM_STARS; ++i) {
-            glColor3f(1.0f, 1.0f, 1.0f);
             glVertex3fv(star_positions[i]);
         }
+        glPointSize(15.0f)
+        glVertex3f(1.0f,0.0f,0.0f);
         glEnd();
 
         glEnable(GL_DEPTH_TEST); 
@@ -395,13 +395,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
             rot = quat_mul(qYaw, rot);   // Yaw first
             rot = quat_mul(qPitch, rot); // Then pitch
-
-
-
+            
             break;
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
-
     return 0;
 }
