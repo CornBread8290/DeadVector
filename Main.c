@@ -17,6 +17,9 @@ uint16_t keyState = 0;
 #define pi 3.14159265358979323846f
 #define pi2 (pi * 2.0f)
 
+
+
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 Quat rot = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -150,12 +153,6 @@ void Cleanup() {
 }
 
 
-
-
-#define NUM_STARS 64
-float star_positions[NUM_STARS][3];
-
-// Tiny PRNG
 static uint32_t seed = 12355;
 uint32_t xorshift32() {
     seed ^= seed << 13;
@@ -163,6 +160,87 @@ uint32_t xorshift32() {
     seed ^= seed << 5;
     return seed;
 }
+
+
+#define SAMPLE_RATE 8000
+
+enum SoundType {
+    SND_BEEP = 0,
+    SND_ENGINE,
+    SND_GUN,
+    SND_HARSH
+};
+
+DWORD WINAPI playThread(LPVOID p) {
+    PlaySoundA((LPCSTR)((uint8_t*)p), NULL, SND_MEMORY | SND_ASYNC);
+    HeapFree(GetProcessHeap(), 0, p);
+    return 0;
+}
+void playSoundEffect(int type, float pitch, float duration, float volume) {
+    int NUM_SAMPLES = ((int)(SAMPLE_RATE * duration));
+    typedef struct {
+        uint8_t buffer[44 + NUM_SAMPLES];
+    } SoundData;
+
+    SoundData* snd = (SoundData*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(SoundData));
+    if (!snd) return;
+
+    uint8_t* buf = snd->buffer;
+    memcpy(buf, "RIFF", 4);
+    *(uint32_t*)(buf + 4) = 36 + NUM_SAMPLES;
+    memcpy(buf + 8, "WAVEfmt ", 8);
+    *(uint32_t*)(buf + 16) = 16;
+    *(uint16_t*)(buf + 20) = 1;
+    *(uint16_t*)(buf + 22) = 1;
+    *(uint32_t*)(buf + 24) = SAMPLE_RATE;
+    *(uint32_t*)(buf + 28) = SAMPLE_RATE;
+    *(uint16_t*)(buf + 32) = 1;
+    *(uint16_t*)(buf + 34) = 8;
+    memcpy(buf + 36, "data", 4);
+    *(uint32_t*)(buf + 40) = NUM_SAMPLES;
+
+    for (int i = 0; i < NUM_SAMPLES; ++i) {
+        float t = (float)i / SAMPLE_RATE;
+        float s = 0;
+
+        switch (type) {
+            case SND_BEEP: {
+                float env = expf(-5.0f * t);
+                s = sinf(2.0f * 3.14159f * pitch * t);
+                break;
+            }
+            case SND_ENGINE: {
+                float noise = (((int)xorshift32() % 256) - 128) / 128.0f * 0.3f;
+                float hum = sinf(2.0f * 3.14159f * pitch * t) * 0.6f;
+                s = (noise + hum) * 0.5f;
+                break;
+            }
+            case SND_GUN: {
+                float decay = expf(-20.0f * t);
+                s = ((rand() % 2) ? 1.0f : -1.0f) * decay;
+                s *= sinf(2.0f * 3.14159f * pitch * t); 
+                break;
+            }
+            case SND_HARSH: {
+                float noise = (((int)xorshift32() % 256) - 128) / 128.0f * 0.3f;
+                float hum = sinf(2.0f * 3.14159f * pitch * t) * 0.6f;
+                s = (noise + hum) * 0.5f;
+                break;
+            }
+        }
+
+        int v = (int)((s + 1.0f) * 127.5f);
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        buf[44 + i] = (uint8_t)v;
+    }
+
+    CreateThread(NULL, 0, playThread, snd, 0, NULL);
+}
+
+#define NUM_STARS 64
+float star_positions[NUM_STARS][3];
+
 
 void init_stars() {
     float dist = 100.0f;
@@ -231,7 +309,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     Vec3 vel = {0.0f, 0.0f, 0.0f}; 
     Vec3 spn = {0.0f, 0.0f, 0.0f};
-    float thrust = 0.01f;
+    float thrust = 0.003f;
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
@@ -247,6 +325,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         if (keyState & 0x08) { dir.x += 1; } // D
         if (keyState & 0x40) { dir.y += 1; }// Shift
         if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
+        if (keyState & 0x100) {   } // Up
 
 
         Quat invRot = quat_conjugate(rot);
@@ -296,8 +375,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         for (int i = 0; i < NUM_STARS; ++i) {
             glVertex3fv(star_positions[i]);
         }
-        glPointSize(15.0f)
-        glVertex3f(1.0f,0.0f,0.0f);
         glEnd();
 
         glEnable(GL_DEPTH_TEST); 
@@ -361,6 +438,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         case 'E': keyBit = 0x20; break;
                         case VK_SHIFT: keyBit = 0x40; break;
                         case VK_CONTROL: keyBit = 0x80; break;
+                        case VK_UP: keyBit = 0x100; 
+                            playSoundEffect(SND_BEEP, 800.0f);
+                            break;
+                        case VK_DOWN: keyBit = 0x200; break;
+                        case VK_LEFT: keyBit = 0x400; break;
+                        case VK_RIGHT: keyBit = 0x800; break;
                         case VK_ESCAPE: 
                             ShowCursor(TRUE);
                             ReleaseCapture();
