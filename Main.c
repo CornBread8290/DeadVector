@@ -115,31 +115,29 @@ Quat quat_conjugate(Quat q) {
     return (Quat){ -q.x, -q.y, -q.z, q.w };
 }
 
-void ResizeGLScene(GLsizei width, GLsizei height) {
-    if (height == 0) height = 1; // Prevent division by zero
-    glViewport(0, 0, width, height);
-
-    float fovY = 90.0f;
-    float aspectRatio = (float)width / (float)height;
-    float zNear = 1.0f;
-    float zFar = 10000000000000.0f;
-
+void SetProjectionMatrix(float fovY, float aspectRatio, float zNear, float zFar) {
     float f = 1.0f / tanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
+    float mat[16] = {0};
 
-    float projectionMatrix[16] = {0};
-    projectionMatrix[0] = f / aspectRatio;
-    projectionMatrix[5] = f;
-    projectionMatrix[10] = (zFar + zNear) / (zNear - zFar);
-    projectionMatrix[11] = -1.0f;
-    projectionMatrix[14] = (2.0f * zFar * zNear) / (zNear - zFar);
-    projectionMatrix[15] = 0.0f;
+    mat[0] = f / aspectRatio;
+    mat[5] = f;
+    mat[10] = (zFar + zNear) / (zNear - zFar);
+    mat[11] = -1.0f;
+    mat[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+    mat[15] = 0.0f;
 
     glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(projectionMatrix); // Load the custom projection matrix
+    glLoadMatrixf(mat);
     glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
 }
+void ResizeGLScene(GLsizei width, GLsizei height) {
+    if (height == 0) height = 1;  // Prevent division by zero
 
+    glViewport(0, 0, width, height);
+
+    float aspectRatio = (float)width / (float)height;
+    SetProjectionMatrix(90.0f, aspectRatio, 0.1f, 10000000000000.0f);  // For near/normal rendering layers
+}
 void Cleanup() {
     if (hRC) {
         wglMakeCurrent(NULL, NULL);
@@ -162,7 +160,7 @@ uint32_t xorshift32() {
 }
 
 
-#define SAMPLE_RATE 8000
+#define SAMPLE_RATE 4000
 
 enum SoundType {
     SND_BEEP = 0,
@@ -172,33 +170,38 @@ enum SoundType {
 };
 
 DWORD WINAPI playThread(LPVOID p) {
-    PlaySoundA((LPCSTR)((uint8_t*)p), NULL, SND_MEMORY | SND_ASYNC);
-    HeapFree(GetProcessHeap(), 0, p);
+    uint8_t* soundBuffer = (uint8_t*)p;
+
+    PlaySoundA((LPCSTR)soundBuffer, NULL, SND_MEMORY | SND_ASYNC);
+
+    HeapFree(GetProcessHeap(), 0, soundBuffer);
+
     return 0;
 }
+
 void playSoundEffect(int type, float pitch, float duration, float volume) {
     int NUM_SAMPLES = ((int)(SAMPLE_RATE * duration));
-    typedef struct {
-        uint8_t buffer[44 + NUM_SAMPLES];
-    } SoundData;
+    int bufferSize = 44 + NUM_SAMPLES;
 
-    SoundData* snd = (SoundData*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(SoundData));
+    // Dynamically allocate memory for the sound buffer
+    uint8_t* snd = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bufferSize);
     if (!snd) return;
 
-    uint8_t* buf = snd->buffer;
-    memcpy(buf, "RIFF", 4);
-    *(uint32_t*)(buf + 4) = 36 + NUM_SAMPLES;
-    memcpy(buf + 8, "WAVEfmt ", 8);
-    *(uint32_t*)(buf + 16) = 16;
-    *(uint16_t*)(buf + 20) = 1;
-    *(uint16_t*)(buf + 22) = 1;
-    *(uint32_t*)(buf + 24) = SAMPLE_RATE;
-    *(uint32_t*)(buf + 28) = SAMPLE_RATE;
-    *(uint16_t*)(buf + 32) = 1;
-    *(uint16_t*)(buf + 34) = 8;
-    memcpy(buf + 36, "data", 4);
-    *(uint32_t*)(buf + 40) = NUM_SAMPLES;
+    // Fill the WAV header
+    memcpy(snd, "RIFF", 4);
+    *(uint32_t*)(snd + 4) = 36 + NUM_SAMPLES;
+    memcpy(snd + 8, "WAVEfmt ", 8);
+    *(uint32_t*)(snd + 16) = 16;
+    *(uint16_t*)(snd + 20) = 1;
+    *(uint16_t*)(snd + 22) = 1;
+    *(uint32_t*)(snd + 24) = SAMPLE_RATE;
+    *(uint32_t*)(snd + 28) = SAMPLE_RATE;
+    *(uint16_t*)(snd + 32) = 1;
+    *(uint16_t*)(snd + 34) = 8;
+    memcpy(snd + 36, "data", 4);
+    *(uint32_t*)(snd + 40) = NUM_SAMPLES;
 
+    // Generate the sound samples
     for (int i = 0; i < NUM_SAMPLES; ++i) {
         float t = (float)i / SAMPLE_RATE;
         float s = 0;
@@ -206,19 +209,17 @@ void playSoundEffect(int type, float pitch, float duration, float volume) {
         switch (type) {
             case SND_BEEP: {
                 float env = expf(-5.0f * t);
-                s = sinf(2.0f * 3.14159f * pitch * t);
+                s = sinf(2.0f * 3.14159f * pitch * t) * env;
                 break;
             }
             case SND_ENGINE: {
-                float noise = (((int)xorshift32() % 256) - 128) / 128.0f * 0.3f;
-                float hum = sinf(2.0f * 3.14159f * pitch * t) * 0.6f;
-                s = (noise + hum) * 0.5f;
+                s = (rand() & 255) * 0.002f;
                 break;
             }
             case SND_GUN: {
                 float decay = expf(-20.0f * t);
                 s = ((rand() % 2) ? 1.0f : -1.0f) * decay;
-                s *= sinf(2.0f * 3.14159f * pitch * t); 
+                s *= sinf(2.0f * 3.14159f * pitch * t);
                 break;
             }
             case SND_HARSH: {
@@ -232,7 +233,7 @@ void playSoundEffect(int type, float pitch, float duration, float volume) {
         int v = (int)((s + 1.0f) * 127.5f);
         if (v < 0) v = 0;
         if (v > 255) v = 255;
-        buf[44 + i] = (uint8_t)v;
+        snd[44 + i] = (uint8_t)v;
     }
 
     CreateThread(NULL, 0, playThread, snd, 0, NULL);
@@ -319,6 +320,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 
         Vec3 dir = {0};
+        if (keyState != 0){ playSoundEffect(SND_ENGINE, 300.0f,0.5f,0.0f); }
         if (keyState & 0x01) { dir.z -= 1; } // W
         if (keyState & 0x04) { dir.z += 1; } // S
         if (keyState & 0x02) { dir.x -= 1; } // A
@@ -353,13 +355,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         glLoadIdentity();
 
-        rot = quat_normalize(rot); // keep it tight, babe 💅
+        rot = quat_normalize(rot);
         
         float mat[16];
         quat_to_matrix(&rot, mat);
         
         glDisable(GL_DEPTH_TEST);
 
+        //HUD
         glBegin(GL_LINES);
         glLineWidth(100.0f);
         glColor3f(0.5f, 0.5f, 0.5f);
@@ -367,8 +370,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glVertex3f(1.0f, 0.0f, -2.0f);
         glEnd();
 
-        glMultMatrixf(mat); // rotation matrix applied
+        //Rotation
+        glMultMatrixf(mat);
         
+        //Stars
         glPointSize(2.0f); 
         glBegin(GL_POINTS);
         glColor3f(1.0f, 1.0f, 1.0f);
@@ -377,9 +382,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         }
         glEnd();
 
+        //translation
         glEnable(GL_DEPTH_TEST); 
         glTranslatef(-pos.x, -pos.y, -pos.z);
         
+        //far
         glPushMatrix();
         glTranslatef(0.0f, 0.0f, -50000000000.0f); 
         glBegin(GL_TRIANGLES);
@@ -390,6 +397,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glEnd();
         glPopMatrix();
         
+        //near
         glPushMatrix();
         glTranslatef(0.0f, 0.0f, -5.0f);
         glBegin(GL_TRIANGLES);
@@ -439,7 +447,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         case VK_SHIFT: keyBit = 0x40; break;
                         case VK_CONTROL: keyBit = 0x80; break;
                         case VK_UP: keyBit = 0x100; 
-                            playSoundEffect(SND_BEEP, 800.0f);
                             break;
                         case VK_DOWN: keyBit = 0x200; break;
                         case VK_LEFT: keyBit = 0x400; break;
