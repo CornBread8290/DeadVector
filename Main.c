@@ -189,8 +189,8 @@ void playSoundEffect(int type, float pitch, float duration, float volume) {
 
         switch (type) {
             case SND_BEEP: {
-                float env = expf(-5.0f * t);
-                s = sinf(2.0f * 3.14159f * pitch * t) * env;
+                //float env = expf(-5.0f * t);
+                s = sinf(2.0f * 3.14159f * pitch * t) * volume; //* env;
                 break;
             }
             case SND_ENGINE: {
@@ -222,8 +222,6 @@ void playSoundEffect(int type, float pitch, float duration, float volume) {
 
 #define NUM_STARS 64
 float star_positions[NUM_STARS][3];
-
-
 void init_stars() {
     float dist = 100.0f;
 
@@ -236,7 +234,6 @@ void init_stars() {
         star_positions[i][1] = dist * sin_phi * sinf(theta);
         star_positions[i][2] = dist * cosf(phi);    }
 }
-
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     
@@ -449,7 +446,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 }
                 break;
         case WM_MOUSEMOVE: 
-            //for fps
+            //for first person
             RECT windowRect;
             GetClientRect(hwnd, &windowRect);
             int centerX = (windowRect.left + windowRect.right) / 2;
