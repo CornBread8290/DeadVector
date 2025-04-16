@@ -13,19 +13,16 @@ HGLRC hRC; // OpenGL Rendering Context
 HDC hDC;   // Device Context
 HWND hWnd; // Window Handle
 
+float aspectRatio;
+
 uint16_t keyState = 0;
 #define pi 3.14159265358979323846f
 #define pi2 (pi * 2.0f)
 
-
-
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-
-Quat rot = {0.0f, 0.0f, 0.0f, 1.0f};
+Quat rot = {0.0f, 0.0f, 0.0f, 1.0f}; //Pitch, Yaw, Roll, W
 Vec3 pos = {0.0f, 0.0f, 0.0f};
 
-
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 Quat quat_mul(Quat a, Quat b) {
     Quat q;
@@ -80,10 +77,8 @@ Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
     // q * v * conj(q)
     Vec3 out;
     
-    // Extract the vector part of the quaternion
     Vec3 u = { q.x, q.y, q.z };
     
-    // Cross products
     Vec3 uv = {
         u.y * v.z - u.z * v.y,
         u.z * v.x - u.x * v.z,
@@ -96,7 +91,6 @@ Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
         u.x * uv.y - u.y * uv.x
     };
 
-    // Apply rotation
     uv.x *= 2.0f * q.w;
     uv.y *= 2.0f * q.w;
     uv.z *= 2.0f * q.w;
@@ -115,7 +109,7 @@ Quat quat_conjugate(Quat q) {
     return (Quat){ -q.x, -q.y, -q.z, q.w };
 }
 
-void SetProjectionMatrix(float fovY, float aspectRatio, float zNear, float zFar) {
+void SetProjectionMatrix(float fovY, float zNear, float zFar) {
     float f = 1.0f / tanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
     float mat[16] = {0};
 
@@ -130,14 +124,6 @@ void SetProjectionMatrix(float fovY, float aspectRatio, float zNear, float zFar)
     glLoadMatrixf(mat);
     glMatrixMode(GL_MODELVIEW);
 }
-void ResizeGLScene(GLsizei width, GLsizei height) {
-    if (height == 0) height = 1;  // Prevent division by zero
-
-    glViewport(0, 0, width, height);
-
-    float aspectRatio = (float)width / (float)height;
-    SetProjectionMatrix(90.0f, aspectRatio, 0.1f, 10000000000000.0f);  // For near/normal rendering layers
-}
 void Cleanup() {
     if (hRC) {
         wglMakeCurrent(NULL, NULL);
@@ -150,7 +136,6 @@ void Cleanup() {
     }
 }
 
-
 static uint32_t seed = 12355;
 uint32_t xorshift32() {
     seed ^= seed << 13;
@@ -158,7 +143,6 @@ uint32_t xorshift32() {
     seed ^= seed << 5;
     return seed;
 }
-
 
 #define SAMPLE_RATE 4000
 
@@ -183,11 +167,9 @@ void playSoundEffect(int type, float pitch, float duration, float volume) {
     int NUM_SAMPLES = ((int)(SAMPLE_RATE * duration));
     int bufferSize = 44 + NUM_SAMPLES;
 
-    // Dynamically allocate memory for the sound buffer
     uint8_t* snd = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bufferSize);
     if (!snd) return;
 
-    // Fill the WAV header
     memcpy(snd, "RIFF", 4);
     *(uint32_t*)(snd + 4) = 36 + NUM_SAMPLES;
     memcpy(snd + 8, "WAVEfmt ", 8);
@@ -201,7 +183,6 @@ void playSoundEffect(int type, float pitch, float duration, float volume) {
     memcpy(snd + 36, "data", 4);
     *(uint32_t*)(snd + 40) = NUM_SAMPLES;
 
-    // Generate the sound samples
     for (int i = 0; i < NUM_SAMPLES; ++i) {
         float t = (float)i / SAMPLE_RATE;
         float s = 0;
@@ -213,21 +194,21 @@ void playSoundEffect(int type, float pitch, float duration, float volume) {
                 break;
             }
             case SND_ENGINE: {
-                s = (rand() & 255) * 0.002f;
+                s = (xorshift32() & 255) * volume;
                 break;
             }
             case SND_GUN: {
                 float decay = expf(-20.0f * t);
-                s = ((rand() % 2) ? 1.0f : -1.0f) * decay;
+                s = ((xorshift32() % 2) ? 1.0f : -1.0f) * decay;
                 s *= sinf(2.0f * 3.14159f * pitch * t);
                 break;
             }
-            case SND_HARSH: {
-                float noise = (((int)xorshift32() % 256) - 128) / 128.0f * 0.3f;
+            /*case SND_HARSH: {
+                float noise = ;
                 float hum = sinf(2.0f * 3.14159f * pitch * t) * 0.6f;
                 s = (noise + hum) * 0.5f;
                 break;
-            }
+            }*/
         }
 
         int v = (int)((s + 1.0f) * 127.5f);
@@ -309,7 +290,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     UpdateWindow(hWnd);
 
     Vec3 vel = {0.0f, 0.0f, 0.0f}; 
-    Vec3 spn = {0.0f, 0.0f, 0.0f};
+    Quat spn = {0.0f, 0.0f, 0.0f, 1.0f};
     float thrust = 0.003f;
 
     MSG msg;
@@ -318,9 +299,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         DispatchMessage(&msg);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-
         Vec3 dir = {0};
-        if (keyState != 0){ playSoundEffect(SND_ENGINE, 300.0f,0.5f,0.0f); }
+        if (keyState != 0){ playSoundEffect(SND_ENGINE, 300.0f,0.5f,0.002f); }
         if (keyState & 0x01) { dir.z -= 1; } // W
         if (keyState & 0x04) { dir.z += 1; } // S
         if (keyState & 0x02) { dir.x -= 1; } // A
@@ -328,7 +308,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         if (keyState & 0x40) { dir.y += 1; }// Shift
         if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
         if (keyState & 0x100) {   } // Up
-
+        if (keyState & 0x200) {   } // Down
+        if (keyState & 0x400) {   } // Left
+        if (keyState & 0x800) {   } // Right
 
         Quat invRot = quat_conjugate(rot);
         Vec3 worldDir = quat_rotate_vec3(invRot, dir);
@@ -350,9 +332,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
          rot = quat_mul(dq, rot);
         }
     
-
-
-
         glLoadIdentity();
 
         rot = quat_normalize(rot);
@@ -388,12 +367,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         
         //far
         glPushMatrix();
-        glTranslatef(0.0f, 0.0f, -50000000000.0f); 
+        glTranslatef(0.0f, 0.0f, -5000000.0f); 
         glBegin(GL_TRIANGLES);
         glColor3f(1.0f, 0.0f, 0.0f); 
-        glVertex3f(0.0f, 10000000000.0f, 0.0f);
-        glVertex3f(-10000000000.0f, -10000000000.0f, 0.0f);
-        glVertex3f(10000000000.0f, -10000000000.0f, 0.0f);
+        glVertex3f(0.0f, 1000000.0f, 0.0f);
+        glVertex3f(-1000000.0f, -1000000.0f, 0.0f);
+        glVertex3f(1000000.0f, -1000000.0f, 0.0f);
         glEnd();
         glPopMatrix();
         
@@ -407,10 +386,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glVertex3f(1.0f, -1.0f, 0.0f);
         glEnd();
         glPopMatrix();
-        
 
-
-
+    
         SwapBuffers(hDC);    
         }
 
@@ -425,7 +402,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             SetCapture(hwnd);
             break;
         case WM_SIZE:
-            ResizeGLScene(LOWORD(lParam), HIWORD(lParam));
+            GLsizei width = LOWORD(lParam);
+            GLsizei height HIWORD(lParam);
+            if (height == 0) height = 1;  // Prevent division by zero
+            glViewport(0, 0, width, height);
+            aspectRatio = (float)width / (float)height;
+            SetProjectionMatrix(90.0f, 1.0f, 4000000000.0f);
             break;
         case WM_CLOSE:
             PostQuitMessage(0);
@@ -446,8 +428,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         case 'E': keyBit = 0x20; break;
                         case VK_SHIFT: keyBit = 0x40; break;
                         case VK_CONTROL: keyBit = 0x80; break;
-                        case VK_UP: keyBit = 0x100; 
-                            break;
+                        case VK_UP: keyBit = 0x100; break;
                         case VK_DOWN: keyBit = 0x200; break;
                         case VK_LEFT: keyBit = 0x400; break;
                         case VK_RIGHT: keyBit = 0x800; break;
@@ -468,6 +449,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 }
                 break;
         case WM_MOUSEMOVE: 
+            //for fps
             RECT windowRect;
             GetClientRect(hwnd, &windowRect);
             int centerX = (windowRect.left + windowRect.right) / 2;
@@ -477,14 +459,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             ClientToScreen(hwnd, &centerScreen);
             SetCursorPos(centerScreen.x, centerScreen.y);
 
-            int deltaX = LOWORD(lParam) - centerX;
-            int deltaY = HIWORD(lParam) - centerY;
-
-            Quat qPitch = quat_axis_angle(1, 0, 0, deltaY*0.01); // local X
-            Quat qYaw   = quat_axis_angle(0, 1, 0, deltaX*0.01);   // local Y
-
-            rot = quat_mul(qYaw, rot);   // Yaw first
-            rot = quat_mul(qPitch, rot); // Then pitch
+            rot = quat_mul(quat_axis_angle(0, 1, 0, (LOWORD(lParam) - centerX)*0.01), rot);//qYaw
+            rot = quat_mul(quat_axis_angle(1, 0, 0, (HIWORD(lParam) - centerY)*0.01), rot);//qPitch
             
             break;
         default:
