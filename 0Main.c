@@ -103,7 +103,8 @@ Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
 Quat quat_conjugate(Quat q) {
     return (Quat){ -q.x, -q.y, -q.z, q.w };
 }
-void SetProjectionMatrix(float fovY, float zNear, float zFar) {
+void SetProjectionMatrix(float zNear, float zFar) {
+    float fovY = 90.0f;
     float f = 1.0f / tanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
     float mat[16] = {0};
 
@@ -142,6 +143,62 @@ void init_stars() {
         star_positions[i][1] = dist * sin_phi * sinf(theta);
         star_positions[i][2] = dist * cosf(phi);    }
 }
+void drawPlanet(float radius, int lats, int longs) {
+    for (int i = 0; i <= lats; ++i) {
+        float lat0 = pi * (-0.5 + (float)(i - 1) / lats);
+        float z0  = sin(lat0);
+        float zr0 =  cos(lat0);
+
+        float lat1 = pi * (-0.5 + (float)i / lats);
+        float z1 = sin(lat1);
+        float zr1 = cos(lat1);
+
+        glBegin(GL_QUAD_STRIP);
+        for (int j = 0; j <= longs; ++j) {
+            float lng = 2 * pi * (float)(j - 1) / longs;
+            float x = cos(lng);
+            float y = sin(lng);
+
+            glColor3f(1, (fabs(z0)), (fabs(z0))); 
+            glVertex3f(radius * x * zr0, radius * y * zr0, radius * z0);
+
+            glColor3f(1, (fabs(z1)), (fabs(z1)));
+            glVertex3f(radius * x * zr1, radius * y * zr1, radius * z1);
+        }
+        glEnd();
+    }
+}
+void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
+    float bandStep = (outerRadius - innerRadius) / bands;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    for (int b = 0; b < bands; ++b) {
+        float r0 = innerRadius + b * bandStep;
+        float r1 = r0 + bandStep;
+
+        float base = 0.6f + 0.3f * sin(b * 0.5f); // Makes it undulate smoothly
+        float red   = base * 0.3f;                // Just a kiss of warmth
+        float green = base * 0.6f;                // Minty glacier vibes
+        float blue  = base * 1.0f;                // Ice daddy blue 💙
+        float alpha = 0.3f + 0.5f * fabs(cos(b * 0.3f)); // Transparent like my intentions
+        glBegin(GL_TRIANGLE_STRIP);
+        for (int i = 0; i <= segments; ++i) {
+            float angle = 2 * pi * i / segments;
+            float x = cos(angle);
+            float y = sin(angle);
+
+            glColor4f(red, green, blue, alpha); glVertex2f(x * r0, y * r0);
+            glColor4f(red, green, blue, alpha); glVertex2f(x * r1, y * r1);
+        }
+        glEnd();
+    }
+
+    glDisable(GL_BLEND);
+}
+
+
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     
@@ -188,7 +245,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     init_stars(); // Initialize star positions
 
-    // End of OpenGL initialization
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
@@ -198,6 +254,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     float thrust = 0.003f;
 
     MSG msg;
+    //MAIN LOOP
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
@@ -211,8 +268,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         if (keyState & 0x08) { dir.x += 1; } // D
         if (keyState & 0x40) { dir.y += 1; }// Shift
         if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
-        if (keyState & 0x100) {   } // Up
-        if (keyState & 0x200) {   } // Down
+        if (keyState & 0x100) {  thrust = 1000.0f; } // Up
+        if (keyState & 0x200) { thrust = 0.003f; } // Down
         if (keyState & 0x400) {   } // Left
         if (keyState & 0x800) {   } // Right
         if (keyState & 0x10) {  // Q
@@ -229,8 +286,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         else if (keyState == 0 ){ stopSound();}
         else { playSoundEffect(SND_ENGINE, 200.0f,vol, 0); }
 
-
-
         Quat invRot = quat_conjugate(rot);
         Vec3 worldDir = quat_rotate_vec3(invRot, dir);
 
@@ -242,28 +297,18 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         pos.y += vel.y;
         pos.z += vel.z;
         
-    
         glLoadIdentity();
 
         rot = quat_normalize(rot);
         
         float mat[16];
         quat_to_matrix(&rot, mat);
-        
-        glDisable(GL_DEPTH_TEST);
-
-        //HUD
-        glBegin(GL_LINES);
-        glLineWidth(100.0f);
-        glColor3f(0.5f, 0.5f, 0.5f);
-        glVertex3f(-1.0f, 0.0f, -2.0f);
-        glVertex3f(1.0f, 0.0f, -2.0f);
-        glEnd();
 
         //Rotation
         glMultMatrixf(mat);
         
         //Stars
+        glDisable(GL_DEPTH_TEST);
         glPointSize(2.0f); 
         glBegin(GL_POINTS);
         glColor3f(1.0f, 1.0f, 1.0f);
@@ -275,33 +320,69 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         //translation
         glEnable(GL_DEPTH_TEST); 
         glTranslatef(-pos.x, -pos.y, -pos.z);
-        
+
         //far
+        SetProjectionMatrix(10000.0f, 4000000000.0f);
         glPushMatrix();
         glTranslatef(0.0f, 0.0f, -5000000.0f); 
-        glBegin(GL_TRIANGLES);
-        glColor3f(1.0f, 0.0f, 0.0f); 
-        glVertex3f(0.0f, 1000000.0f, 0.0f);
-        glVertex3f(-1000000.0f, -1000000.0f, 0.0f);
-        glVertex3f(1000000.0f, -1000000.0f, 0.0f);
-        glEnd();
+        drawPlanet(1000000.0f, 20, 20);
+        drawRings(1000000.0f, 2000000.0f, 20, 20);
         glPopMatrix();
-        
+
+        glClear(GL_DEPTH_BUFFER_BIT);
+
         //near
+        SetProjectionMatrix(0.01f, 4000.0f);
         glPushMatrix();
         glTranslatef(0.0f, 0.0f, -5.0f);
         glBegin(GL_TRIANGLES);
-        glColor3f(0.0f, 1.0f, 0.0f); // green 
+        glColor3f(0.0f, 1.0f, 0.0f); 
         glVertex3f(0.0f, 1.0f, 0.0f);
         glVertex3f(-1.0f, -1.0f, 0.0f);
         glVertex3f(1.0f, -1.0f, 0.0f);
         glEnd();
-        glPopMatrix();
 
-    
+        glClear(GL_DEPTH_BUFFER_BIT);
+
+        SetProjectionMatrix(0.01f, 2.0f);
+
+        // Reset transformations
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f); // Set orthographic projection for HUD
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity(); 
+        
+        // HUD 
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+
+        glLineWidth(2.5f);
+        glColor4f(0.2f, 1.0f, 0.9f, 0.8f);
+        
+        glBegin(GL_LINES);
+        glVertex3f(-0.05f, 0.0f, -0.2f);
+        glVertex3f( 0.05f, 0.0f, -0.2f);
+        
+        glVertex3f(0.0f, -0.05f, -0.2f);
+        glVertex3f(0.0f,  0.05f, -0.2f);
+        
+        glColor4f(0.2f, 0.8f, 1.0f, 0.3f); 
+        for (float i = -0.5f; i <= 0.5f; i += 0.05f) {
+            glVertex3f(i, -0.5f, -0.2f);
+            glVertex3f(i,  0.5f, -0.2f);
+        
+            glVertex3f(-0.5f, i, -0.2f);
+            glVertex3f( 0.5f, i, -0.2f);
+        }
+        glEnd();
+        
+        glDisable(GL_BLEND);
+        glPopMatrix(); 
+
         SwapBuffers(hDC);    
         }
-
     Cleanup();
     return (int)msg.wParam;
 }
@@ -318,7 +399,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             if (height == 0) height = 1;  // Prevent division by zero
             glViewport(0, 0, width, height);
             aspectRatio = (float)width / (float)height;
-            SetProjectionMatrix(90.0f, 1.0f, 4000000000.0f);
+            SetProjectionMatrix(1.0f, 4000000000.0f);
             break;
         case WM_CLOSE:
             PostQuitMessage(0);
