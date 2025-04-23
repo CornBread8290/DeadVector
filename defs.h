@@ -15,7 +15,6 @@ typedef struct { float x, y, z, w; } Quat;
 
 #define NUM_STARS 64
 
-#define SAMPLE_RATE 4000
 
 enum SoundType {
     SND_BEEP = 0,

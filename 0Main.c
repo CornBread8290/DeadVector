@@ -15,7 +15,9 @@ Vec3 pos = {0.0f, 0.0f, 0.0f};
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-void playSoundEffect(int type, float pitch, float duration, float volume);
+void stopSound();
+void playSoundEffect(int type, float pitch, float volume, float pan);
+
 
 Quat quat_mul(Quat a, Quat b) {
     Quat q;
@@ -101,7 +103,6 @@ Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
 Quat quat_conjugate(Quat q) {
     return (Quat){ -q.x, -q.y, -q.z, q.w };
 }
-
 void SetProjectionMatrix(float fovY, float zNear, float zFar) {
     float f = 1.0f / tanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
     float mat[16] = {0};
@@ -128,7 +129,6 @@ void Cleanup() {
         hDC = NULL;
     }
 }
-
 float star_positions[NUM_STARS][3];
 void init_stars() {
     float dist = 100.0f;
@@ -160,7 +160,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     hWnd = CreateWindowEx(0, className, "Dead Vector", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
 
-    //OpenGL initialization
     hDC = GetDC(hWnd);
 
     PIXELFORMATDESCRIPTOR pfd = {0};
@@ -205,7 +204,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         Vec3 dir = {0};
-        if (keyState != 0){ playSoundEffect(SND_ENGINE, 300.0f,0.5f,0.002f); }
+        float vol = 0.002f;
         if (keyState & 0x01) { dir.z -= 1; } // W
         if (keyState & 0x04) { dir.z += 1; } // S
         if (keyState & 0x02) { dir.x -= 1; } // A
@@ -216,6 +215,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         if (keyState & 0x200) {   } // Down
         if (keyState & 0x400) {   } // Left
         if (keyState & 0x800) {   } // Right
+        if (keyState & 0x10) {  // Q
+            Quat dq = quat_axis_angle(0, 0, 1, -0.02);
+            rot = quat_mul(dq, rot);
+        }
+        if (keyState & 0x20) {  // E
+          Quat dq = quat_axis_angle(0, 0, 1, 0.02);
+         rot = quat_mul(dq, rot);
+        }
+        
+        if ((keyState & 0x828) && (keyState & 0x412) == 0){ playSoundEffect(SND_ENGINE, 200.0f,vol, -1); }
+        else if ((keyState & 0x412) ) {playSoundEffect(SND_ENGINE, 200.0f,vol, 1);}
+        else if (keyState == 0 ){ stopSound();}
+        else { playSoundEffect(SND_ENGINE, 200.0f,vol, 0); }
+
+
 
         Quat invRot = quat_conjugate(rot);
         Vec3 worldDir = quat_rotate_vec3(invRot, dir);
@@ -228,14 +242,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         pos.y += vel.y;
         pos.z += vel.z;
         
-        if (keyState & 0x10) {  // Q
-            Quat dq = quat_axis_angle(0, 0, 1, -0.02);
-            rot = quat_mul(dq, rot);
-        }
-        if (keyState & 0x20) {  // E
-          Quat dq = quat_axis_angle(0, 0, 1, 0.02);
-         rot = quat_mul(dq, rot);
-        }
     
         glLoadIdentity();
 
@@ -308,7 +314,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             break;
         case WM_SIZE:
             GLsizei width = LOWORD(lParam);
-            GLsizei height HIWORD(lParam);
+            GLsizei height = HIWORD(lParam);
             if (height == 0) height = 1;  // Prevent division by zero
             glViewport(0, 0, width, height);
             aspectRatio = (float)width / (float)height;

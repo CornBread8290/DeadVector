@@ -1,3 +1,4 @@
+#include "defs.h"
 static uint32_t seed = 12355;
 
 uint32_t xorshift32() {
