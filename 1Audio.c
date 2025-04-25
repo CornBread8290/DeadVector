@@ -22,10 +22,9 @@ void stopSound() {
 }
 
 void playSoundEffect(int type, float pitch, float volume, float pan) {
+    if (hWaveOut) return; // Already playing
     float leftGain  = (1.0f - pan) * 0.5f;
     float rightGain = (1.0f + pan) * 0.5f;  
-    //stopSound();
-    if (hWaveOut) return; // Already playing
 
     int duration = 20;
     int numSamples = (int)(SAMPLE_RATE * duration * NUM_CHANNELS);
