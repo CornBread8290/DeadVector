@@ -19,6 +19,8 @@ void stopSound();
 void playSoundEffect(int type, float pitch, float volume, float pan);
 
 
+
+
 Quat quat_mul(Quat a, Quat b) {
     Quat q;
     q.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
@@ -198,8 +200,6 @@ void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
     glDisable(GL_BLEND);
 }
 
-
-
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     
     const char *className = "OGL";
@@ -281,10 +281,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
          rot = quat_mul(dq, rot);
         }
         
-        if ((keyState & 0x828) && (keyState & 0x412) == 0){ playSoundEffect(SND_ENGINE, 200.0f,vol, -1); }
-        else if ((keyState & 0x412) ) {playSoundEffect(SND_ENGINE, 200.0f,vol, 1);}
+        /*if ((keyState & 0x828) && (keyState & 0x412) == 0){ playSoundEffect(SND_ENGINE, 200.0f,vol, -1); }
+        else if ((keyState & 0x412) &&(keyState & 0x828)==0) {playSoundEffect(SND_ENGINE, 200.0f,vol, 1);}
         else if (keyState == 0 ){ stopSound();}
-        else { playSoundEffect(SND_ENGINE, 200.0f,vol, 0); }
+        else { playSoundEffect(SND_ENGINE, 200.0f,vol, 0); }*/
 
         Quat invRot = quat_conjugate(rot);
         Vec3 worldDir = quat_rotate_vec3(invRot, dir);
@@ -307,6 +307,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         //Rotation
         glMultMatrixf(mat);
         
+        SetProjectionMatrix(0.1f, 10000.0f);
+
         //Stars
         glDisable(GL_DEPTH_TEST);
         glPointSize(2.0f); 
@@ -316,6 +318,20 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glVertex3fv(star_positions[i]);
         }
         glEnd();
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ZERO);
+        
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex3f(3,0,0);
+        
+        for (int i = 0; i <= 64; i++) {
+            float angle = pi2 * i / 64;
+            glColor3f(0.0f, 0.0f, 0.0f);
+            glVertex3f(3, cos(angle), sin(angle));
+        }    
+        glEnd();
+
 
         //translation
         glEnable(GL_DEPTH_TEST); 
@@ -327,6 +343,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glTranslatef(0.0f, 0.0f, -5000000.0f); 
         drawPlanet(1000000.0f, 20, 20);
         drawRings(1000000.0f, 2000000.0f, 20, 20);
+        glRotated(90, 1, 1, 0);
+        glTranslated(0, 15000000, -5000000);
+        drawPlanet(500000.0f, 20, 20);
         glPopMatrix();
 
         glClear(GL_DEPTH_BUFFER_BIT);
@@ -353,29 +372,37 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity(); 
         
+
         // HUD 
+        glColor3f(1.0f, 1.0f, 1.0f);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        
 
         glLineWidth(2.5f);
-        glColor4f(0.2f, 1.0f, 0.9f, 0.8f);
-        
         glBegin(GL_LINES);
+
+        float points[12][2] = {
+            {-1.0f,  -0.2f}, { 1.0f,  -0.2f},
+            { -0.5f,  -0.2f}, { -0.75f,   1.0f},
+            { 0.5f,  -0.2f}, { 0.75f,   1.0f},
+            { 0.0f,  0.0f}, { 0.0f,   0.0f},
+            { 0.0f,  0.0f}, { 0.0f,   0.0f},
+
+
+        };
+        
+        for (int i = 0; i < 12; i++) {
+            glVertex3f(points[i][0], points[i][1], -0.2f);
+        }
+
+
+        glColor4f(0.2f, 1.0f, 0.9f, 0.8f);
         glVertex3f(-0.05f, 0.0f, -0.2f);
         glVertex3f( 0.05f, 0.0f, -0.2f);
         
         glVertex3f(0.0f, -0.05f, -0.2f);
         glVertex3f(0.0f,  0.05f, -0.2f);
-        
-        glColor4f(0.2f, 0.8f, 1.0f, 0.3f); 
-        for (float i = -0.5f; i <= 0.5f; i += 0.05f) {
-            glVertex3f(i, -0.5f, -0.2f);
-            glVertex3f(i,  0.5f, -0.2f);
-        
-            glVertex3f(-0.5f, i, -0.2f);
-            glVertex3f( 0.5f, i, -0.2f);
-        }
+
         glEnd();
         
         glDisable(GL_BLEND);
@@ -383,7 +410,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         SwapBuffers(hDC);    
         }
-    Cleanup();
     return (int)msg.wParam;
 }
 

@@ -9,20 +9,24 @@
 static HWAVEOUT hWaveOut = NULL;
 static WAVEHDR waveHdr = {0};
 static uint8_t* sndBuffer = NULL;
+static float pan0;
 
 void stopSound() {
-    if (hWaveOut) {
+    //if (hWaveOut) {
         waveOutReset(hWaveOut);
         if (waveHdr.lpData) waveOutUnprepareHeader(hWaveOut, &waveHdr, sizeof(WAVEHDR));
         if (sndBuffer) HeapFree(GetProcessHeap(), 0, sndBuffer);
         waveOutClose(hWaveOut);
         hWaveOut = NULL;
         sndBuffer = NULL;
-    }
+  //  }
 }
 
 void playSoundEffect(int type, float pitch, float volume, float pan) {
-    if (hWaveOut) return; // Already playing
+    if (hWaveOut) {
+        if (pan0 == pan)return;
+    }
+    pan0 = pan;
     float leftGain  = (1.0f - pan) * 0.5f;
     float rightGain = (1.0f + pan) * 0.5f;  
 
