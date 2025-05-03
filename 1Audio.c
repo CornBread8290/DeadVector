@@ -13,12 +13,12 @@ static float pan0;
 
 void stopSound() {
     //if (hWaveOut) {
-        waveOutReset(hWaveOut);
-        if (waveHdr.lpData) waveOutUnprepareHeader(hWaveOut, &waveHdr, sizeof(WAVEHDR));
-        if (sndBuffer) HeapFree(GetProcessHeap(), 0, sndBuffer);
-        waveOutClose(hWaveOut);
-        hWaveOut = NULL;
-        sndBuffer = NULL;
+    waveOutReset(hWaveOut);
+    if (waveHdr.lpData) waveOutUnprepareHeader(hWaveOut, &waveHdr, sizeof(WAVEHDR));
+    if (sndBuffer) HeapFree(GetProcessHeap(), 0, sndBuffer);
+    waveOutClose(hWaveOut);
+    hWaveOut = NULL;
+    sndBuffer = NULL;
   //  }
 }
 

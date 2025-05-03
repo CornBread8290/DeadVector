@@ -7,3 +7,6 @@ uint32_t xorshift32() {
     seed ^= seed << 5;
     return seed;
 }
+float xorshift32f() {
+    return (float)xorshift32() / 4294967295.0f;
+}

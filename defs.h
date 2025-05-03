@@ -23,6 +23,6 @@ enum SoundType {
     SND_HARSH
 };
 uint32_t xorshift32(void);
-
+float xorshift32f(void);
 
 #endif // DEFS_H
