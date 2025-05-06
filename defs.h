@@ -24,5 +24,6 @@ enum SoundType {
 };
 uint32_t xorshift32(void);
 float xorshift32f(void);
+float meTanf(float num);
 
 #endif // DEFS_H

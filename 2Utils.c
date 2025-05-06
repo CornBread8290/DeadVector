@@ -10,3 +10,6 @@ uint32_t xorshift32() {
 float xorshift32f() {
     return (float)xorshift32() / 4294967295.0f;
 }
+float meTanf(float num){
+    return sin(num) / cos(num);
+}

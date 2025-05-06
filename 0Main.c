@@ -13,7 +13,6 @@ uint16_t keyState = 0;
 Quat rot = {0.0f, 0.0f, 0.0f, 1.0f}; //Pitch, Yaw, Roll, W
 Vec3 pos = {0.0f, 0.0f, 0.0f};
 
-
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 void stopSound();
@@ -105,7 +104,7 @@ Quat quat_conjugate(Quat q) {
 }
 void SetProjectionMatrix(float zNear, float zFar) {
     float fovY = 90.0f;
-    float f = 1.0f / tanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
+    float f = 1.0f / meTanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
     float mat[16] = {0};
 
     mat[0] = f / aspectRatio;
@@ -129,19 +128,6 @@ void Cleanup() {
         ReleaseDC(hWnd, hDC);
         hDC = NULL;
     }
-}
-float star_positions[NUM_STARS][3];
-void init_stars() {
-    float dist = 100.0f;
-
-    for (int i = 0; i < NUM_STARS; ++i) {
-        float theta = xorshift32f() * pi2;
-        float phi = xorshift32f() * pi;
-        float sin_phi = sinf(phi);
-        
-        star_positions[i][0] = dist * sin_phi * cosf(theta);
-        star_positions[i][1] = dist * sin_phi * sinf(theta);
-        star_positions[i][2] = dist * cosf(phi);    }
 }
 void drawPlanet(float radius, int lats, int longs) {
     for (int i = 0; i <= lats; ++i) {
@@ -208,6 +194,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 
+    float RF = 0.0f;
+    float IR = 0.0f;
+    float VIS = 0.5f;
+    float RAD = 0.25f;
+
     if (!RegisterClass(&wc)) {
         MessageBox(NULL, "error in register window class.", "Error", MB_OK | MB_ICONERROR);
         return 1;
@@ -242,11 +233,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     // HUD texture data
     unsigned char textureData[64 * 64 * 3];  // 64x64 texture
+    int *tex = textureData;
     for (int i = 0; i < 64 * 64; ++i) {
-        textureData[i * 3 + 0] = 31;  // Red
-        textureData[i * 3 + 1] = 31;  // Green
-        textureData[i * 3 + 2] = 31;  // Blue
+        textureData[i * 3 + 0] = 127;  // Red
+        textureData[i * 3 + 1] = 127;  // Green
+        textureData[i * 3 + 2] = 127;  // Blue
     }
+    for (int i = 0; i < 64 * 64){}
 
     GLuint textureID;
     glGenTextures(1, &textureID);
@@ -255,8 +248,15 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 64, 64, 0, GL_RGB, GL_UNSIGNED_BYTE, textureData);
 
-    init_stars(); // Initialize star positions
-
+    float star_positions[NUM_STARS][3];
+    float dist = 100.0f;
+    for (int i = 0; i < NUM_STARS; ++i) {
+        float theta = xorshift32f() * pi2;
+        float phi = xorshift32f() * pi;
+        float sin_phi = sinf(phi);
+        star_positions[i][0] = dist * sin_phi * cosf(theta);
+        star_positions[i][1] = dist * sin_phi * sinf(theta);
+        star_positions[i][2] = dist * cosf(phi);    }
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
@@ -266,10 +266,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     float thrust = 0.003f;
 
     MSG msg;
-    float RF = 0.0f;
-    float IR = 0.0f;
-    float VIS = 0.5f;
-    float RAD = 0.25f;
 
 
     //MAIN LOOP
@@ -427,31 +423,18 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glVertex2f((float)(i+1)*0.02 +0.5, sig[i+1]*0.1-0.5f);
 
         }
-        glEnd();
-
         glLineWidth(2.5f);
-        glBegin(GL_LINES);
-
-        float linePoints[12][2] = {
+        float linePoints[8][2] = {
             {-1.0f,  -0.2f}, { 1.0f,  -0.2f},
             { -0.5f,  -0.2f}, { -0.75f,   1.0f},
             { 0.5f,  -0.2f}, { 0.75f,   1.0f},
-
-        };
-        
-        for (int i = 0; i < 12; i++) {
+            {-0.05f, -0.2f}, {0.05f, 0.0f},
+            {0.0f, -0.05f}, {0.0f,  0.05f}
+        };   
+        for (int i = 0; i < 8; i++) {
             glVertex3f(linePoints[i][0], linePoints[i][1], -0.2f);
         }
-        //
-
-        glColor4f(0.2f, 1.0f, 0.9f, 0.8f);
-        glVertex3f(-0.05f, 0.0f, -0.2f);
-        glVertex3f( 0.05f, 0.0f, -0.2f);
-        
-        glVertex3f(0.0f, -0.05f, -0.2f);
-        glVertex3f(0.0f,  0.05f, -0.2f);
         glEnd();
-        
         glPopMatrix(); 
 
         SwapBuffers(hDC);    
