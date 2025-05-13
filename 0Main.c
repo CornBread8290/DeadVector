@@ -14,9 +14,8 @@ Quat rot = {0.0f, 0.0f, 0.0f, 1.0f}; //Pitch, Yaw, Roll, W
 Vec3 pos = {0.0f, 0.0f, 0.0f};
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-
-void stopSound();
-void playSoundEffect(int type, float pitch, float volume, float pan);
+void playSoundEffect(int type, float pitch, float volume, float pan, int channel);
+void stopSound(int channel);
 
 Quat quat_mul(Quat a, Quat b) {
     Quat q;
@@ -26,6 +25,15 @@ Quat quat_mul(Quat a, Quat b) {
     q.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
     return q;
 }
+float linePoints[12][2] = {
+    {-1.0f,  -0.2f}, { 1.0f,  -0.2f},
+    { -0.5f,  -0.2f}, { -0.75f,   1.0f},
+    { 0.5f,  -0.2f}, { 0.75f,   1.0f},
+    {-0.05f, -0.0f}, {0.05f, 0.0f},
+    {0.0f, -0.05f}, {0.0f,  0.05f},
+    {0.0f,0.0f}, {0.0f, 0.0f}
+};   
+
 Quat quat_axis_angle(float x, float y, float z, float angle_rad) {
     float s = sinf(angle_rad * 0.5f);
     Quat q;
@@ -196,8 +204,15 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     float RF = 0.0f;
     float IR = 0.0f;
-    float VIS = 0.5f;
+    float VIS = 1.0f;
     float RAD = 0.25f;
+
+    float dRF = 0.0f;
+    float dIR = 0.0f;
+    float dVIS = 0.00f;
+    float dRAD =0.0f;
+
+
 
     if (!RegisterClass(&wc)) {
         MessageBox(NULL, "error in register window class.", "Error", MB_OK | MB_ICONERROR);
@@ -232,21 +247,35 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     glDepthFunc(GL_LEQUAL);
 
     // HUD texture data
-    unsigned char textureData[64 * 64 * 3];  // 64x64 texture
-    int *tex = textureData;
-    for (int i = 0; i < 64 * 64; ++i) {
+    unsigned char textureData[256 * 512 * 3];  
+    for (int i = 0; i < 256 * 512; ++i) {
         textureData[i * 3 + 0] = 127;  // Red
         textureData[i * 3 + 1] = 127;  // Green
         textureData[i * 3 + 2] = 127;  // Blue
     }
-    for (int i = 0; i < 64 * 64){}
+    
+    int width = 256;
+    int height = 512;
+    
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int i = (y * width + x) * 3;
+            
+            int checker = ((x / 32) % 2) ^ ((y / 128) % 2);
+            textureData[i + 0] = checker ? 255 : 0;
+            textureData[i + 1] = checker ? 0 : 0;
+            textureData[i + 2] = checker ? 255 : 0;
+        }
+    }
+
+
 
     GLuint textureID;
     glGenTextures(1, &textureID);
     glBindTexture(GL_TEXTURE_2D, textureID);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 64, 64, 0, GL_RGB, GL_UNSIGNED_BYTE, textureData);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 512, 256, 0, GL_RGB, GL_UNSIGNED_BYTE, textureData);
 
     float star_positions[NUM_STARS][3];
     float dist = 100.0f;
@@ -262,7 +291,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     UpdateWindow(hWnd);
 
     Vec3 vel = {0.0f, 0.0f, 0.0f}; 
-    Quat spn = {0.0f, 0.0f, 0.0f, 1.0f};
+    Quat Rvel = {0.0f, 0.0f, 0.0f, 1.0f};
     float thrust = 0.003f;
 
     MSG msg;
@@ -278,33 +307,28 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         Vec3 dir = {0};
         float vol = 0.002f;
-        if (keyState & 0x01) { dir.z -= 1; } // W
-        if (keyState & 0x04) { dir.z += 1; } // S
-        if (keyState & 0x02) { dir.x -= 1; } // A
-        if (keyState & 0x08) { dir.x += 1; } // D
+        IR = __builtin_popcount(keyState&~0x100)/15.0f;
+        if (keyState & 0x01) { Rvel = quat_mul( quat_axis_angle(1, 0, 0, 0.001), Rvel); } // W
+        if (keyState & 0x04) { Rvel = quat_mul( quat_axis_angle(1, 0, 0, -0.001), Rvel); } // S
+        if (keyState & 0x02) { Rvel = quat_mul( quat_axis_angle(0, 1, 0, -0.001), Rvel); } // A
+        if (keyState & 0x08) { Rvel = quat_mul( quat_axis_angle(0, 1, 0, 0.001), Rvel); } // D
         if (keyState & 0x40) { dir.y += 1; }// Shift
         if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
-        if (keyState & 0x100) {  thrust = 1000.0f; } // Up
-        if (keyState & 0x200) { thrust = 0.003f; } // Down
-        if (keyState & 0x400) {   } // Left
-        if (keyState & 0x800) {   } // Right
-        if (keyState & 0x10) {  // Q
-            Quat dq = quat_axis_angle(0, 0, 1, -0.02);
-            rot = quat_mul(dq, rot);
-        }
-        if (keyState & 0x20) {  // E
-          Quat dq = quat_axis_angle(0, 0, 1, 0.02);
-         rot = quat_mul(dq, rot);
-        }
+        if (keyState & 0x100) { IR+=0.5f; dir.z -= 100000; } // Up
+        if (keyState & 0x200) { dir.z += 1; } // Down
+        if (keyState & 0x400) { dir.x -= 1; } // Left
+        if (keyState & 0x800) { dir.x += 1; } // Right
+        if (keyState & 0x10) { Rvel = quat_mul(quat_axis_angle(0, 0, 1, -0.001), Rvel); }// Q
+        if (keyState & 0x20) { Rvel = quat_mul(quat_axis_angle(0, 0, 1, 0.001), Rvel); }// E
         if (keyState){
             if(IR<0.8) IR += 0.02f;
         }
 
-        if ((keyState & 0x828) && (keyState & 0x412) == 0){ playSoundEffect(SND_ENGINE, 200.0f,vol, -1); }
-        else if ((keyState & 0x412) && (keyState & 0x828)==0) {playSoundEffect(SND_ENGINE, 200.0f,vol, 1);}
-        else if (keyState == 0 ){ stopSound();IR *= 0.9f;}
-        else { playSoundEffect(SND_ENGINE, 200.0f,vol, 0); }
-
+        if (keyState & 0b101111101101 ) { playSoundEffect(SND_ENGINE, 10.0f,vol, -1, 1); }
+        else stopSound(1);
+        if (keyState & 0b11111010111) {playSoundEffect(SND_ENGINE, 10.0f,vol, 1, 2);}
+        else stopSound(2);
+    
         Quat invRot = quat_conjugate(rot);
         Vec3 worldDir = quat_rotate_vec3(invRot, dir);
 
@@ -318,14 +342,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         
         glLoadIdentity();
 
+        //Rotation
+        //Rvel = quat_normalize(Rvel);
+        rot = quat_mul(Rvel, rot);
         rot = quat_normalize(rot);
-        
         float mat[16];
         quat_to_matrix(&rot, mat);
-
-        //Rotation
         glMultMatrixf(mat);
-        
+
         SetProjectionMatrix(0.1f, 10000.0f);
 
         //Stars
@@ -336,6 +360,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         for (int i = 0; i < NUM_STARS; ++i) {
             glVertex3fv(star_positions[i]);
         }
+
         glEnd();
 
         //glEnable(GL_BLEND);
@@ -344,10 +369,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glBegin(GL_TRIANGLE_FAN);
         glVertex3f(3,0,0);
         
-        for (int i = 0; i <= 64; i++) {
-            float angle = pi2 * i / 64;
+        for (int i = 0; i <= 32; i++) {
+            float angle = pi2 * i / 32;
             glColor3i(0, 0, 0);
-            glVertex3f(3, cos(angle), sin(angle));
+            glVertex3f(4+i%2*2, cos(angle), sin(angle));
         }    
         glEnd();
 
@@ -361,7 +386,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glPushMatrix();
         glTranslatef(0.0f, 0.0f, -5000000.0f); 
         drawPlanet(1000000.0f, 20, 20); //p1
-        drawRings(1000000.0f, 2000000.0f, 20, 20); //p1
+        drawRings(1000000.0f, 2000000.0f, 1024, 45); //p1
         glPopMatrix();
 
         glClear(GL_DEPTH_BUFFER_BIT);
@@ -396,24 +421,27 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glBindTexture(GL_TEXTURE_2D, textureID);
     
             glBegin(GL_QUADS);
-            glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -1.0f);
-            glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, -1.0f);
-            glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, -0.2f);
-            glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, -0.2f);
+            glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, -1.0f);
+            glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, -1.0f);
+            glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, -0.2f);
+            glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -0.2f);
             glEnd();
             glDisable(GL_TEXTURE_2D);
         
-
+        dRF += (RF-dRF)*0.01;
+        dIR += (IR-dIR)*0.01;
+        dVIS += (VIS-dVIS)*0.01;
+        dRAD += (RAD - dRAD)*0.01;
         float sig[13];
 
         for (int i = 0; i < 4; i++)
-        sig[i] = xorshift32f()/10 + RF + (IR - RF) * i / 3.0f;
+        sig[i] = xorshift32f()/10 + dRF + (dIR - dRF) * i / 3.0f;
 
         for (int i = 0; i < 4; i++)
-        sig[4 + i] =xorshift32f()/10+ IR + (VIS - IR) * i / 3.0f;
+        sig[4 + i] =xorshift32f()/10+ dIR + (dVIS - dIR) * i / 3.0f;
 
         for (int i = 0; i < 5; i++)
-        sig[8 + i] =xorshift32f()/10+ VIS + (RAD - VIS) * i / 4.0f;
+        sig[8 + i] =xorshift32f()/10+ dVIS + (dRAD - dVIS) * i / 4.0f;
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glBegin(GL_LINES);
 
@@ -424,14 +452,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         }
         glLineWidth(2.5f);
-        float linePoints[8][2] = {
-            {-1.0f,  -0.2f}, { 1.0f,  -0.2f},
-            { -0.5f,  -0.2f}, { -0.75f,   1.0f},
-            { 0.5f,  -0.2f}, { 0.75f,   1.0f},
-            {-0.05f, -0.2f}, {0.05f, 0.0f},
-            {0.0f, -0.05f}, {0.0f,  0.05f}
-        };   
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 12; i++) {
             glVertex3f(linePoints[i][0], linePoints[i][1], -0.2f);
         }
         glEnd();
@@ -451,7 +472,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_SIZE:
             GLsizei width = LOWORD(lParam);
             GLsizei height = HIWORD(lParam);
-            if (height == 0) height = 1;  // Prevent division by zero
+            if (height == 0) height = 1; 
             glViewport(0, 0, width, height);
             aspectRatio = (float)width / (float)height;
             SetProjectionMatrix(1.0f, 4000000000.0f);
@@ -510,8 +531,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             rot = quat_mul(quat_axis_angle(1, 0, 0, (HIWORD(lParam) - centerY)*0.01), rot);//qPitch
             
             break;
+        case WM_LBUTTONDOWN:
+            playSoundEffect(SND_GUN, 440, 1, 0, 0);
+            linePoints[11][0] = 0.2f;
+            linePoints[11][1] = -0.2f;
+            break;
+        case WM_LBUTTONUP:
+            linePoints[11][0] = 0.0f;
+            linePoints[11][1] = 0.0f;
+
+            break;
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
+            
     }
     return 0;
 }

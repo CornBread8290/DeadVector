@@ -6,6 +6,7 @@
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
+typedef short int int16_t;
 
 typedef struct { float x, y, z; } Vec3;
 typedef struct { float x, y, z, w; } Quat;
@@ -22,6 +23,8 @@ enum SoundType {
     SND_GUN,
     SND_HARSH
 };
+
+
 uint32_t xorshift32(void);
 float xorshift32f(void);
 float meTanf(float num);
