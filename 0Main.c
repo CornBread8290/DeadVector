@@ -125,16 +125,6 @@ void SetProjectionMatrix(float zNear, float zFar) {
     glLoadMatrixf(mat);
     glMatrixMode(GL_MODELVIEW);
 }
-void Cleanup() {
-    //if (hRC) {
-        wglMakeCurrent(NULL, NULL);
-        wglDeleteContext(hRC);
-        hRC = NULL;
-    //}if (hDC) {
-        ReleaseDC(hWnd, hDC);
-        hDC = NULL;
-    //}
-}
 void drawPlanet(float radius, int lats, int longs) {
     for (int i = 0; i <= lats; ++i) {
         float lat0 = pi * (-0.5 + (float)(i - 1) / lats);
@@ -525,41 +515,45 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             PostQuitMessage(0);
             break;
         case WM_DESTROY:
-            Cleanup();
+            wglMakeCurrent(NULL, NULL);
+            wglDeleteContext(hRC);
+            hRC = NULL;
+            ReleaseDC(hWnd, hDC);
+            hDC = NULL;
             break;
-            case WM_KEYDOWN:
-            case WM_KEYUP:
-                {
-                    int keyBit = 0;
-                    switch (wParam) {
-                        case 'W': keyBit = 0x01; break;
-                        case 'A': keyBit = 0x02; break;
-                        case 'S': keyBit = 0x04; break;
-                        case 'D': keyBit = 0x08; break;
-                        case 'Q': keyBit = 0x10; break;
-                        case 'E': keyBit = 0x20; break;
-                        case VK_SHIFT: keyBit = 0x40; break;
-                        case VK_CONTROL: keyBit = 0x80; break;
-                        case VK_UP: keyBit = 0x100; break;
-                        case VK_DOWN: keyBit = 0x200; break;
-                        case VK_LEFT: keyBit = 0x400; break;
-                        case VK_RIGHT: keyBit = 0x800; break;
-                        case VK_ESCAPE: 
-                            ShowCursor(TRUE);
-                            ReleaseCapture();
-                            break;
-                        default:
-                            break; 
-                    }
-                    if (keyBit) {
-                        if (uMsg == WM_KEYDOWN) {
-                            keyState |= keyBit; //Set
-                        } else if (uMsg == WM_KEYUP) {
-                            keyState &= ~keyBit; //Clear
-                        }
+        case WM_KEYDOWN:
+        case WM_KEYUP:
+            {
+                int keyBit = 0;
+                switch (wParam) {
+                    case 'W': keyBit = 0x01; break;
+                    case 'A': keyBit = 0x02; break;
+                    case 'S': keyBit = 0x04; break;
+                    case 'D': keyBit = 0x08; break;
+                    case 'Q': keyBit = 0x10; break;
+                    case 'E': keyBit = 0x20; break;
+                    case VK_SHIFT: keyBit = 0x40; break;
+                    case VK_CONTROL: keyBit = 0x80; break;
+                    case VK_UP: keyBit = 0x100; break;
+                    case VK_DOWN: keyBit = 0x200; break;
+                    case VK_LEFT: keyBit = 0x400; break;
+                    case VK_RIGHT: keyBit = 0x800; break;
+                    case VK_ESCAPE: 
+                        ShowCursor(TRUE);
+                        ReleaseCapture();
+                        break;
+                    default:
+                        break; 
+                }
+                if (keyBit) {
+                    if (uMsg == WM_KEYDOWN) {
+                        keyState |= keyBit; //Set
+                    } else if (uMsg == WM_KEYUP) {
+                        keyState &= ~keyBit; //Clear
                     }
                 }
-                break;
+            }
+            break;
         case WM_MOUSEMOVE: 
             //for first person
             RECT windowRect;
