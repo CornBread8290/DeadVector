@@ -2,13 +2,21 @@
 #include <gl/gl.h>
 #include "defs.h"
 
+typedef struct {
+    float* vertices;
+    int vertex_count;
+    float* normals;
+} Mesh;
+
 HGLRC hRC; // OpenGL Rendering Context
 HDC hDC;   // Device Context
 HWND hWnd; // Window Handle
 
 float aspectRatio;
 
+double playback = 1.0;
 uint16_t keyState = 0;
+BOOL lasers = FALSE;
 
 Quat rot = {0.0f, 0.0f, 0.0f, 1.0f}; //Pitch, Yaw, Roll, W
 Vec3 pos = {0.0f, 0.0f, 0.0f};
@@ -25,15 +33,6 @@ Quat quat_mul(Quat a, Quat b) {
     q.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
     return q;
 }
-float linePoints[12][2] = {
-    {-1.0f,  -0.2f}, { 1.0f,  -0.2f},
-    { -0.5f,  -0.2f}, { -0.75f,   1.0f},
-    { 0.5f,  -0.2f}, { 0.75f,   1.0f},
-    {-0.05f, -0.0f}, {0.05f, 0.0f},
-    {0.0f, -0.05f}, {0.0f,  0.05f},
-    {0.0f,0.0f}, {0.0f, 0.0f}
-};   
-
 Quat quat_axis_angle(float x, float y, float z, float angle_rad) {
     float s = sinf(angle_rad * 0.5f);
     Quat q;
@@ -127,15 +126,14 @@ void SetProjectionMatrix(float zNear, float zFar) {
     glMatrixMode(GL_MODELVIEW);
 }
 void Cleanup() {
-    if (hRC) {
+    //if (hRC) {
         wglMakeCurrent(NULL, NULL);
         wglDeleteContext(hRC);
         hRC = NULL;
-    }
-    if (hDC) {
+    //}if (hDC) {
         ReleaseDC(hWnd, hDC);
         hDC = NULL;
-    }
+    //}
 }
 void drawPlanet(float radius, int lats, int longs) {
     for (int i = 0; i <= lats; ++i) {
@@ -147,7 +145,7 @@ void drawPlanet(float radius, int lats, int longs) {
         float z1 = sin(lat1);
         float zr1 = cos(lat1);
 
-        glBegin(GL_QUAD_STRIP);
+       glBegin(GL_QUAD_STRIP);
         for (int j = 0; j <= longs; ++j) {
             float lng = 2 * pi * (float)(j - 1) / longs;
             float x = cos(lng);
@@ -159,14 +157,14 @@ void drawPlanet(float radius, int lats, int longs) {
             glColor3f(1, (fabs(z1)), (fabs(z1)));
             glVertex3f(radius * x * zr1, radius * y * zr1, radius * z1);
         }
-        glEnd();
+       glEnd();
     }
 }
 void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
     float bandStep = (outerRadius - innerRadius) / bands;
 
     //glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     for (int b = 0; b < bands; ++b) {
         float r0 = innerRadius + b * bandStep;
@@ -177,7 +175,7 @@ void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
         float green = base * 0.6f;   
         float blue  = base * 1.0f;       
         float alpha = 0.3f + 0.5f * fabs(cos(b * 0.3f));
-        glBegin(GL_TRIANGLE_STRIP);
+       glBegin(GL_TRIANGLE_STRIP);
         for (int i = 0; i <= segments; ++i) {
             float angle = 2 * pi * i / segments;
             float x = cos(angle);
@@ -190,6 +188,16 @@ void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
     }
 
     //glDisable(GL_BLEND);
+}
+/*
+Mesh asteroid(float x, float y, double size){
+    Mesh mesh;
+    mesh.vertex_count = 128;
+    mesh.vertices = (float*)malloc(sizeof(float) * 3 * mesh.vertex_count);
+}*/
+
+void tick() {
+    
 }
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
@@ -213,11 +221,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     float dRAD =0.0f;
 
 
-
+    RegisterClass(&wc);
+    /*
     if (!RegisterClass(&wc)) {
         MessageBox(NULL, "error in register window class.", "Error", MB_OK | MB_ICONERROR);
         return 1;
-    }
+    }*/
 
     hWnd = CreateWindowEx(0, className, "Dead Vector", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1024, 576, NULL, NULL, hInstance, NULL);
 
@@ -245,6 +254,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     glShadeModel(GL_SMOOTH);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glDepthFunc(GL_LEQUAL);
+
+    float linePoints[10][2] = {
+    {-1.0f,  -0.2f}, { 1.0f,  -0.2f},
+    { -0.5f,  -0.2f}, { -0.75f,   1.0f},
+    { 0.5f,  -0.2f}, { 0.75f,   1.0f},
+    {-0.05f, -0.0f}, {0.05f, 0.0f},
+    {0.0f, -0.05f}, {0.0f,  0.05f}
+    };
 
     // HUD texture data
     unsigned char textureData[256 * 512 * 3];  
@@ -303,7 +320,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         DispatchMessage(&msg);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_BLEND);
-
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         Vec3 dir = {0};
         float vol = 0.002f;
@@ -342,6 +359,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         
         glLoadIdentity();
 
+        SetProjectionMatrix(0.1f, 10000.0f);
+        glPushMatrix(); //1
+
         //Rotation
         //Rvel = quat_normalize(Rvel);
         rot = quat_mul(Rvel, rot);
@@ -350,12 +370,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         quat_to_matrix(&rot, mat);
         glMultMatrixf(mat);
 
-        SetProjectionMatrix(0.1f, 10000.0f);
 
         //Stars
         glDisable(GL_DEPTH_TEST);
         glPointSize(2.0f); 
-        glBegin(GL_POINTS);
+       glBegin(GL_POINTS);
         glColor3f(1.0f, 1.0f, 1.0f);
         for (int i = 0; i < NUM_STARS; ++i) {
             glVertex3fv(star_positions[i]);
@@ -363,10 +382,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         glEnd();
 
-        //glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ZERO);
-        
-        glBegin(GL_TRIANGLE_FAN);
+        //glBlendFunc(GL_ONE, GL_ZERO);
+       glBegin(GL_TRIANGLE_FAN);
         glVertex3f(3,0,0);
         
         for (int i = 0; i <= 32; i++) {
@@ -383,17 +400,17 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         //far
         SetProjectionMatrix(10000.0f, 4000000000.0f);
-        glPushMatrix();
+        glPushMatrix(); //2
         glTranslatef(0.0f, 0.0f, -5000000.0f); 
         drawPlanet(1000000.0f, 20, 20); //p1
-        drawRings(1000000.0f, 2000000.0f, 1024, 45); //p1
-        glPopMatrix();
+        drawRings(1200000.0f, 2000000.0f, 1024, 45); //p1
+        glPopMatrix(); //2
 
         glClear(GL_DEPTH_BUFFER_BIT);
 
         //near
         SetProjectionMatrix(0.01f, 40000.0f);
-        glPushMatrix();
+        glPushMatrix(); //2
         glTranslatef(0.0f, 0.0f, -5.0f);
         glBegin(GL_TRIANGLES);
         glColor3f(0.0f, 1.0f, 0.0f); 
@@ -401,9 +418,33 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glVertex3f(-1.0f, -1.0f, 0.0f);
         glVertex3f(1.0f, -1.0f, 0.0f);
         glEnd();
+        glPopMatrix(); //2
+        glPopMatrix(); //1
+
+        //laser
+        if (lasers){
+           glBegin(GL_QUADS);
+            glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            glVertex3f(0.5f, -0.5f, 0.0f);
+            glVertex3f(0.0f, 0.0f, -128.0f);
+            glColor4f(1.0f, 0.0f, 0.0f, 0.0f);
+            glVertex3f(0.7f, -0.5f, 0.0f);
+            glVertex3f(0.0f, 0.0f, -128.0f);
+
+            glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            glVertex3f(0.5f, -0.5f, 0.0f);
+            glVertex3f(0.0f, 0.0f, -128.0f);
+            glColor4f(1.0f, 0.0f, 0.0f, 0.0f);
+            glVertex3f(0.35f, -0.5f, 0.0f);
+            glVertex3f(0.0f, 0.0f, -128.0f);
+
+            glEnd();
+
+        }
+
+
 
         glClear(GL_DEPTH_BUFFER_BIT);
-
 
         // Reset transformations
         glMatrixMode(GL_PROJECTION);
@@ -420,7 +461,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glEnable(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, textureID);
     
-            glBegin(GL_QUADS);
+           glBegin(GL_QUADS);
             glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, -1.0f);
             glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, -1.0f);
             glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, -0.2f);
@@ -442,8 +483,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         for (int i = 0; i < 5; i++)
         sig[8 + i] =xorshift32f()/10+ dVIS + (dRAD - dVIS) * i / 4.0f;
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glBegin(GL_LINES);
+        //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+       glBegin(GL_LINES);
 
         for (int i = 0; i < 12; i++){
             
@@ -452,11 +493,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         }
         glLineWidth(2.5f);
-        for (int i = 0; i < 12; i++) {
+        
+        
+        for (int i = 0; i < 10; i++) {
             glVertex3f(linePoints[i][0], linePoints[i][1], -0.2f);
         }
         glEnd();
         glPopMatrix(); 
+
 
         SwapBuffers(hDC);    
         }
@@ -533,13 +577,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             break;
         case WM_LBUTTONDOWN:
             playSoundEffect(SND_GUN, 440, 1, 0, 0);
-            linePoints[11][0] = 0.2f;
-            linePoints[11][1] = -0.2f;
+            lasers = TRUE;
             break;
         case WM_LBUTTONUP:
-            linePoints[11][0] = 0.0f;
-            linePoints[11][1] = 0.0f;
-
+            lasers = FALSE;
             break;
         default:
             return DefWindowProc(hwnd, uMsg, wParam, lParam);
