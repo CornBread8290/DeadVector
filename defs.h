@@ -14,7 +14,7 @@ typedef struct { float x, y, z, w; } Quat;
 #define pi 3.14159265358979323846f
 #define pi2 (pi * 2.0f)
 
-#define NUM_STARS 64
+#define NUM_STARS 20000
 
 
 enum SoundType {

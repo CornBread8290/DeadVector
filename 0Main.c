@@ -125,36 +125,67 @@ void SetProjectionMatrix(float zNear, float zFar) {
     glLoadMatrixf(mat);
     glMatrixMode(GL_MODELVIEW);
 }
+
+float value_noise1d(float x) {
+    int xi = (int)floorf(x);
+    float xf = x - xi;
+    // Hash function for pseudo-randomness
+    #define HASH1(n) ((n)*2654435761U)
+    unsigned int h0 = HASH1(xi);
+    unsigned int h1 = HASH1(xi+1);
+    float v0 = (h0 & 0xFFFF) / 65535.0f;
+    float v1 = (h1 & 0xFFFF) / 65535.0f;
+    // Linear interpolation
+    return v0 * (1 - xf) + v1 * xf;
+}
+
 void drawPlanet(float radius, int lats, int longs) {
     for (int i = 0; i <= lats; ++i) {
-        float lat0 = pi * (-0.5 + (float)(i - 1) / lats);
-        float z0  = sin(lat0);
-        float zr0 =  cos(lat0);
+        float lat0 = pi * (-0.5f + (float)(i - 1) / lats);
+        float z0  = sinf(lat0);
+        float zr0 = cosf(lat0);
 
-        float lat1 = pi * (-0.5 + (float)i / lats);
-        float z1 = sin(lat1);
-        float zr1 = cos(lat1);
+        float lat1 = pi * (-0.5f + (float)i / lats);
+        float z1 = sinf(lat1);
+        float zr1 = cosf(lat1);
 
-       glBegin(GL_QUAD_STRIP);
+        // Increase noise frequency for more detail
+        float n0 = value_noise1d((float)(i-1) * 1.2f);
+        float n1 = value_noise1d((float)i * 1.2f);
+
+        float dark_brown[3] = {0.26f, 0.16f, 0.07f};
+        float light_tan[3]  = {0.90f, 0.80f, 0.60f};
+
+        glBegin(GL_QUAD_STRIP);
         for (int j = 0; j <= longs; ++j) {
-            float lng = 2 * pi * (float)(j - 1) / longs;
-            float x = cos(lng);
-            float y = sin(lng);
+            float lng = 2.0f * pi * (float)(j - 1) / longs;
+            float x = cosf(lng);
+            float y = sinf(lng);
 
-            glColor3f(1, (fabs(z0)), (fabs(z0))); 
+            float band0 = 0.25f + 0.75f * n0;
+            float band1 = 0.25f + 0.75f * n1;
+
+            float r0 = dark_brown[0] + (light_tan[0] - dark_brown[0]) * band0;
+            float g0 = dark_brown[1] + (light_tan[1] - dark_brown[1]) * band0;
+            float b0 = dark_brown[2] + (light_tan[2] - dark_brown[2]) * band0;
+
+            float r1 = dark_brown[0] + (light_tan[0] - dark_brown[0]) * band1;
+            float g1 = dark_brown[1] + (light_tan[1] - dark_brown[1]) * band1;
+            float b1 = dark_brown[2] + (light_tan[2] - dark_brown[2]) * band1;
+
+            glColor3f(r0, g0, b0);
+            glNormal3f(x * zr0, y * zr0, z0); 
             glVertex3f(radius * x * zr0, radius * y * zr0, radius * z0);
 
-            glColor3f(1, (fabs(z1)), (fabs(z1)));
+            glColor3f(r1, g1, b1);
+            glNormal3f(x * zr1, y * zr1, z1); 
             glVertex3f(radius * x * zr1, radius * y * zr1, radius * z1);
         }
-       glEnd();
+        glEnd();
     }
 }
 void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
     float bandStep = (outerRadius - innerRadius) / bands;
-
-    //glEnable(GL_BLEND);
-    //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     for (int b = 0; b < bands; ++b) {
         float r0 = innerRadius + b * bandStep;
@@ -165,19 +196,20 @@ void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
         float green = base * 0.6f;   
         float blue  = base * 1.0f;       
         float alpha = 0.3f + 0.5f * fabs(cos(b * 0.3f));
-       glBegin(GL_TRIANGLE_STRIP);
+        glBegin(GL_TRIANGLE_STRIP);
         for (int i = 0; i <= segments; ++i) {
             float angle = 2 * pi * i / segments;
             float x = cos(angle);
             float y = sin(angle);
 
+            glNormal3f((x+1)/2, y, 0.0f);
             glColor4f(red, green, blue, alpha); glVertex2f(x * r0, y * r0);
+            glNormal3f((x+1)/2, y, 0.0f);
             glColor4f(red, green, blue, alpha); glVertex2f(x * r1, y * r1);
         }
         glEnd();
     }
 
-    //glDisable(GL_BLEND);
 }
 /*
 Mesh asteroid(float x, float y, double size){
@@ -212,11 +244,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 
     RegisterClass(&wc);
-    /*
-    if (!RegisterClass(&wc)) {
-        MessageBox(NULL, "error in register window class.", "Error", MB_OK | MB_ICONERROR);
-        return 1;
-    }*/
 
     hWnd = CreateWindowEx(0, className, "Dead Vector", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1024, 576, NULL, NULL, hInstance, NULL);
 
@@ -284,15 +311,24 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 512, 256, 0, GL_RGB, GL_UNSIGNED_BYTE, textureData);
 
-    float star_positions[NUM_STARS][3];
-    float dist = 100.0f;
-    for (int i = 0; i < NUM_STARS; ++i) {
-        float theta = xorshift32f() * pi2;
-        float phi = xorshift32f() * pi;
-        float sin_phi = sinf(phi);
-        star_positions[i][0] = dist * sin_phi * cosf(theta);
-        star_positions[i][1] = dist * sin_phi * sinf(theta);
-        star_positions[i][2] = dist * cosf(phi);    }
+    GLuint starList = glGenLists(1);
+    glNewList(starList, GL_COMPILE);
+        glPushMatrix();
+            glRotatef(40, 1,1,0);
+            for (int i = 0; i < NUM_STARS; ++i) {
+                float size = xorshift32f();
+                glPointSize(size*2);
+                glBegin(GL_POINTS);
+                glColor4f(1.0f, 1.0f, 1.0f, size);
+
+                float x = xorshift32f()-xorshift32f();
+                float y = xorshift32f()-xorshift32f();
+                float z = (xorshift32f()-xorshift32f())/10;
+                glVertex3f(x, y, z);
+            }
+            glEnd();
+        glPopMatrix();
+    glEndList();
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
@@ -303,12 +339,16 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     MSG msg;
 
-
+    glEnable(GL_LIGHT0);
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+    
     //MAIN LOOP
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_LIGHTING);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -349,71 +389,69 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         
         glLoadIdentity();
 
-        SetProjectionMatrix(0.1f, 10000.0f);
-        glPushMatrix(); //1
 
-        //Rotation
-        //Rvel = quat_normalize(Rvel);
-        rot = quat_mul(Rvel, rot);
-        rot = quat_normalize(rot);
-        float mat[16];
-        quat_to_matrix(&rot, mat);
-        glMultMatrixf(mat);
+        SetProjectionMatrix(0.0001f, 4.0f);
+        glPushMatrix();
 
+            //Rotation
+            //Rvel = quat_normalize(Rvel);
+            rot = quat_mul(Rvel, rot);
+            rot = quat_normalize(rot);
+            float mat[16];
+            quat_to_matrix(&rot, mat);
+            glMultMatrixf(mat);
 
-        //Stars
-        glDisable(GL_DEPTH_TEST);
-        glPointSize(2.0f); 
-       glBegin(GL_POINTS);
-        glColor3f(1.0f, 1.0f, 1.0f);
-        for (int i = 0; i < NUM_STARS; ++i) {
-            glVertex3fv(star_positions[i]);
-        }
+            GLfloat light_pos[] = { 4.0f, 0.0f, 0.0f, 0.0f };
+            glLightfv(GL_LIGHT0, GL_POSITION, light_pos);
 
-        glEnd();
+            glDisable(GL_LIGHTING);
 
-        //glBlendFunc(GL_ONE, GL_ZERO);
-       glBegin(GL_TRIANGLE_FAN);
-        glVertex3f(3,0,0);
-        
-        for (int i = 0; i <= 32; i++) {
-            float angle = pi2 * i / 32;
-            glColor3i(0, 0, 0);
-            glVertex3f(4+i%2*2, cos(angle), sin(angle));
-        }    
-        glEnd();
+            //Stars
+            glCallList(starList);
 
+            //Sun
+            glColor4f(1,1,1,1);
+            glBegin(GL_TRIANGLE_FAN);
+            glVertex3f(3,0,0);
+            for (int i = 0; i <= 32; i++) {
+                float angle = pi2 * i / 32;
+                glColor4i(0, 0, 0,200);
+                glVertex3f(4+i%2*2, cos(angle), sin(angle));
+            }    
+            glEnd();
+            glEnable(GL_LIGHTING);
 
-        //translation
-        glEnable(GL_DEPTH_TEST); 
-        glTranslatef(-pos.x, -pos.y, -pos.z);
+            //translation
+            glEnable(GL_DEPTH_TEST); 
+            glTranslatef(-pos.x, -pos.y, -pos.z);
 
-        //far
-        SetProjectionMatrix(10000.0f, 4000000000.0f);
-        glPushMatrix(); //2
-        glTranslatef(0.0f, 0.0f, -5000000.0f); 
-        drawPlanet(1000000.0f, 20, 20); //p1
-        drawRings(1200000.0f, 2000000.0f, 1024, 45); //p1
-        glPopMatrix(); //2
+            //far
+            SetProjectionMatrix(10000.0f, 4000000000.0f);
+            glPushMatrix(); //2
+                glTranslatef(0.0f, 0.0f, -5000000.0f); 
+                drawPlanet(1000000.0f, 20, 20); //p1
+                drawRings(1200000.0f, 2000000.0f, 1024, 45); //p1
+            glPopMatrix(); //2
 
-        glClear(GL_DEPTH_BUFFER_BIT);
+            glClear(GL_DEPTH_BUFFER_BIT);
 
-        //near
-        SetProjectionMatrix(0.01f, 40000.0f);
-        glPushMatrix(); //2
-        glTranslatef(0.0f, 0.0f, -5.0f);
-        glBegin(GL_TRIANGLES);
-        glColor3f(0.0f, 1.0f, 0.0f); 
-        glVertex3f(0.0f, 1.0f, 0.0f);
-        glVertex3f(-1.0f, -1.0f, 0.0f);
-        glVertex3f(1.0f, -1.0f, 0.0f);
-        glEnd();
-        glPopMatrix(); //2
+            //near
+            SetProjectionMatrix(0.01f, 40000.0f);
+            glPushMatrix(); //2
+                glTranslatef(0.0f, 0.0f, -5.0f);
+                glBegin(GL_TRIANGLES);
+                glColor3f(0.0f, 1.0f, 0.0f); 
+                glVertex3f(0.0f, 1.0f, 0.0f);
+                glVertex3f(-1.0f, -1.0f, 0.0f);
+                glVertex3f(1.0f, -1.0f, 0.0f);
+                glEnd();
+            glPopMatrix(); //2
         glPopMatrix(); //1
 
         //laser
         if (lasers){
-           glBegin(GL_QUADS);
+            glDisable(GL_LIGHTING);
+            glBegin(GL_QUADS);
             glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
             glVertex3f(0.5f, -0.5f, 0.0f);
             glVertex3f(0.0f, 0.0f, -128.0f);
@@ -427,11 +465,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glColor4f(1.0f, 0.0f, 0.0f, 0.0f);
             glVertex3f(0.35f, -0.5f, 0.0f);
             glVertex3f(0.0f, 0.0f, -128.0f);
-
             glEnd();
+            glEnable(GL_LIGHTING);
 
         }
-
 
 
         glClear(GL_DEPTH_BUFFER_BIT);
@@ -446,6 +483,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         // HUD 
         glDisable(GL_DEPTH_TEST);
+        glDisable(GL_LIGHTING);
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
             // Main HUD texture
             glEnable(GL_TEXTURE_2D);
