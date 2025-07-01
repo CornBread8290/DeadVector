@@ -8,6 +8,7 @@ typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
 typedef short int int16_t;
 
+typedef struct { float x, y; } Vec2;
 typedef struct { float x, y, z; } Vec3;
 typedef struct { float x, y, z, w; } Quat;
 

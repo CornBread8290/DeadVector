@@ -19,6 +19,8 @@ uint16_t keyState = 0;
 BOOL lasers = FALSE;
 
 Quat rot = {0.0f, 0.0f, 0.0f, 1.0f}; //Pitch, Yaw, Roll, W
+//Quat view = {0.0f, 0.0f, 0.0f, 1.0f};
+Vec2 view = {0.0f, 0.0f};
 Vec3 pos = {0.0f, 0.0f, 0.0f};
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -50,7 +52,7 @@ Quat quat_normalize(Quat q) {
     q.w /= mag;
     return q;
 }
-void quat_to_matrix(const Quat* q, float* m) {
+static inline void quat_to_matrix(const Quat* q, float* m) {
     float x2 = q->x + q->x, y2 = q->y + q->y, z2 = q->z + q->z;
     float xx = q->x * x2, yy = q->y * y2, zz = q->z * z2;
     float xy = q->x * y2, xz = q->x * z2, yz = q->y * z2;
@@ -314,12 +316,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     GLuint starList = glGenLists(1);
     glNewList(starList, GL_COMPILE);
         glPushMatrix();
+            glTranslatef(0.4f, 0.4f, 0.0f);
             glRotatef(40, 1,1,0);
             for (int i = 0; i < NUM_STARS; ++i) {
                 float size = xorshift32f();
                 glPointSize(size*2);
                 glBegin(GL_POINTS);
-                glColor4f(1.0f, 1.0f, 1.0f, size);
+                glColor4f(1.0f, 1.0f, 1.0f, size*0.8f);
 
                 float x = xorshift32f()-xorshift32f();
                 float y = xorshift32f()-xorshift32f();
@@ -355,11 +358,31 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         Vec3 dir = {0};
         float vol = 0.002f;
         IR = __builtin_popcount(keyState&~0x100)/15.0f;
-        if (keyState & 0x01) { Rvel = quat_mul( quat_axis_angle(1, 0, 0, 0.001), Rvel); } // W
-        if (keyState & 0x04) { Rvel = quat_mul( quat_axis_angle(1, 0, 0, -0.001), Rvel); } // S
-        if (keyState & 0x02) { Rvel = quat_mul( quat_axis_angle(0, 1, 0, -0.001), Rvel); } // A
-        if (keyState & 0x08) { Rvel = quat_mul( quat_axis_angle(0, 1, 0, 0.001), Rvel); } // D
-        if (keyState & 0x40) { dir.y += 1; }// Shift
+
+
+        float angle = 0.001f;
+        Vec3 right = quat_rotate_vec3(Rvel, (Vec3){1, 0, 0});
+        Vec3 up    = quat_rotate_vec3(Rvel, (Vec3){0, 1, 0});
+        Vec3 fwd   = quat_rotate_vec3(Rvel, (Vec3){0, 0, 1});
+
+        // Then, apply rotation around these world-space vectors
+        if (keyState & 0x01) {
+            Rvel = quat_mul(quat_axis_angle(right.x, right.y, right.z,  angle), Rvel);
+        }
+        if (keyState & 0x04) {
+            Rvel = quat_mul(quat_axis_angle(right.x, right.y, right.z, -angle), Rvel);
+        }
+        if (keyState & 0x02) {
+            Rvel = quat_mul(quat_axis_angle(up.x, up.y, up.z, -angle), Rvel);
+        }
+        if (keyState & 0x08) {
+            Rvel = quat_mul(quat_axis_angle(up.x, up.y, up.z,  angle), Rvel);
+        }        
+
+
+        if (keyState & 0x40) { //dir.y += 1;
+            playSoundEffect(SND_BEEP, 60, 0.85f, 0, 3);
+        }// Shift
         if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
         if (keyState & 0x100) { IR+=0.5f; dir.z -= 100000; } // Up
         if (keyState & 0x200) { dir.z += 1; } // Down
@@ -397,9 +420,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             //Rvel = quat_normalize(Rvel);
             rot = quat_mul(Rvel, rot);
             rot = quat_normalize(rot);
+            //Quat trot = quat_mul(view, rot);
             float mat[16];
             quat_to_matrix(&rot, mat);
             glMultMatrixf(mat);
+
+            glRotatef(view.x, 0,1,0);
+            glRotatef(view.y, 1,0,0);
+
 
             GLfloat light_pos[] = { 4.0f, 0.0f, 0.0f, 0.0f };
             glLightfv(GL_LIGHT0, GL_POSITION, light_pos);
@@ -603,9 +631,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             ClientToScreen(hwnd, &centerScreen);
             SetCursorPos(centerScreen.x, centerScreen.y);
 
-            rot = quat_mul(quat_axis_angle(0, 1, 0, (LOWORD(lParam) - centerX)*0.01), rot);//qYaw
-            rot = quat_mul(quat_axis_angle(1, 0, 0, (HIWORD(lParam) - centerY)*0.01), rot);//qPitch
-            
+            //rot = quat_mul(quat_axis_angle(0, 1, 0, (LOWORD(lParam) - centerX)*0.01), rot);//qYaw
+            //rot = quat_mul(quat_axis_angle(1, 0, 0, (HIWORD(lParam) - centerY)*0.01), rot);//qPitch
+            //view.x += (LOWORD(lParam) - centerX)*0.01;
+            //view.y += (HIWORD(lParam) - centerY)*0.01;
+
             break;
         case WM_LBUTTONDOWN:
             playSoundEffect(SND_GUN, 440, 1, 0, 0);
