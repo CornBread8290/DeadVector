@@ -6,6 +6,7 @@ typedef struct {
     float* vertices;
     int vertex_count;
     float* normals;
+    float* colors; // RGB per vertex
 } Mesh;
 
 HGLRC hRC; // OpenGL Rendering Context
@@ -19,7 +20,9 @@ uint16_t keyState = 0;
 BOOL lasers = FALSE;
 
 Quat rot = {0.0f, 0.0f, 0.0f, 1.0f}; //Pitch, Yaw, Roll, W
-//Quat view = {0.0f, 0.0f, 0.0f, 1.0f};
+Vec3 angVel = {0}; // current angular velocity vector (radians/sec)
+float dt = 0.01;
+
 Vec2 view = {0.0f, 0.0f};
 Vec3 pos = {0.0f, 0.0f, 0.0f};
 
@@ -127,7 +130,7 @@ void SetProjectionMatrix(float zNear, float zFar) {
     glLoadMatrixf(mat);
     glMatrixMode(GL_MODELVIEW);
 }
-
+//0 - 1
 float value_noise1d(float x) {
     int xi = (int)floorf(x);
     float xf = x - xi;
@@ -141,6 +144,82 @@ float value_noise1d(float x) {
     return v0 * (1 - xf) + v1 * xf;
 }
 
+
+void draw_mesh(const Mesh* mesh) {
+    if (!mesh || mesh->vertex_count <= 0 || !mesh->vertices) return;
+
+    glBegin(GL_TRIANGLES);
+    for (int i = 0; i < mesh->vertex_count; ++i) {
+        if (mesh->normals) glNormal3fv(&mesh->normals[i * 3]);
+        if (mesh->colors) glColor3fv(&mesh->colors[i * 3]);
+        glVertex3fv(&mesh->vertices[i * 3]);
+    }
+    glEnd();
+}
+
+Mesh generate_sphere(int slices, int stacks, float radius) {
+    int tris_per_quad = 6;
+    int total_quads = slices * stacks;
+    int vertex_count = total_quads * tris_per_quad;
+
+    float* verts = malloc(sizeof(float) * vertex_count * 3);
+    float* norms = malloc(sizeof(float) * vertex_count * 3);
+    float* cols  = malloc(sizeof(float) * vertex_count * 3);
+
+    int index = 0;
+
+    for (int i = 0; i < slices; ++i) {
+        float theta1 = (float)i / slices * 2.0f * pi;
+        float theta2 = (float)(i + 1) / slices * 2.0f * pi;
+
+        for (int j = 0; j < stacks; ++j) {
+            float phi1 = (float)j / stacks * pi - pi / 2.0f;
+            float phi2 = (float)(j + 1) / stacks * pi - pi / 2.0f;
+
+            float x[4], y[4], z[4];
+
+            x[0] = cosf(phi1) * cosf(theta1);
+            y[0] = sinf(phi1);
+            z[0] = cosf(phi1) * sinf(theta1);
+
+            x[1] = cosf(phi1) * cosf(theta2);
+            y[1] = sinf(phi1);
+            z[1] = cosf(phi1) * sinf(theta2);
+
+            x[2] = cosf(phi2) * cosf(theta2);
+            y[2] = sinf(phi2);
+            z[2] = cosf(phi2) * sinf(theta2);
+
+            x[3] = cosf(phi2) * cosf(theta1);
+            y[3] = sinf(phi2);
+            z[3] = cosf(phi2) * sinf(theta1);
+
+            int tri_indices[6] = {0, 1, 2, 2, 3, 0};
+
+            for (int k = 0; k < 6; ++k) {
+                int vi = tri_indices[k];
+
+                verts[index * 3 + 0] = x[vi] * radius;
+                verts[index * 3 + 1] = y[vi] * radius;
+                verts[index * 3 + 2] = z[vi] * radius;
+
+                norms[index * 3 + 0] = x[vi];
+                norms[index * 3 + 1] = y[vi];
+                norms[index * 3 + 2] = z[vi];
+
+                cols[index * 3 + 0] = 0.6f;
+                cols[index * 3 + 1] = 0.6f;
+                cols[index * 3 + 2] = 0.6f;
+
+                index++;
+            }
+        }
+    }
+
+    Mesh sphere = { verts, vertex_count, norms, cols };
+    return sphere;
+}
+
 void drawPlanet(float radius, int lats, int longs) {
     for (int i = 0; i <= lats; ++i) {
         float lat0 = pi * (-0.5f + (float)(i - 1) / lats);
@@ -151,9 +230,16 @@ void drawPlanet(float radius, int lats, int longs) {
         float z1 = sinf(lat1);
         float zr1 = cosf(lat1);
 
-        // Increase noise frequency for more detail
-        float n0 = value_noise1d((float)(i-1) * 1.2f);
-        float n1 = value_noise1d((float)i * 1.2f);
+        float n0 = value_noise1d((float)(i-1) * 0.15f);
+        n0 += 0.5f * value_noise1d((float)(i-1) * 0.35f + 100.0f);
+        n0 += 0.25f * value_noise1d((float)(i-1) * 1.0f + 200.0f);
+        n0 /= 1.75f; // Normalize
+
+        float n1 = value_noise1d((float)i * 0.15f);
+        n1 += 0.5f * value_noise1d((float)i * 0.35f + 100.0f);
+        n1 += 0.25f * value_noise1d((float)i * 1.0f + 200.0f);
+        n1 /= 1.75f; // Normalize
+
 
         float dark_brown[3] = {0.26f, 0.16f, 0.07f};
         float light_tan[3]  = {0.90f, 0.80f, 0.60f};
@@ -213,12 +299,7 @@ void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
     }
 
 }
-/*
-Mesh asteroid(float x, float y, double size){
-    Mesh mesh;
-    mesh.vertex_count = 128;
-    mesh.vertices = (float*)malloc(sizeof(float) * 3 * mesh.vertex_count);
-}*/
+
 
 void tick() {
     
@@ -282,63 +363,70 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     {0.0f, -0.05f}, {0.0f,  0.05f}
     };
 
-    // HUD texture data
-    unsigned char textureData[256 * 512 * 3];  
-    for (int i = 0; i < 256 * 512; ++i) {
-        textureData[i * 3 + 0] = 127;  // Red
-        textureData[i * 3 + 1] = 127;  // Green
-        textureData[i * 3 + 2] = 127;  // Blue
-    }
+
+    unsigned char *starData = malloc(2048 * 1024 * 3);
     
-    int width = 256;
-    int height = 512;
-    
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int i = (y * width + x) * 3;
-            
-            int checker = ((x / 32) % 2) ^ ((y / 128) % 2);
-            textureData[i + 0] = checker ? 255 : 0;
-            textureData[i + 1] = checker ? 0 : 0;
-            textureData[i + 2] = checker ? 255 : 0;
+    for (int i = 0; i < 500000; ++i) {
+        float sum_x = 0.0f, sum_y = 0.0f;
+
+        for (int j = 0; j < 3; ++j) {
+            sum_x += xorshift32f();
         }
+        for (int j = 0; j < 30; ++j) {
+            sum_y += xorshift32f();
+        }
+
+        int x = (int)(sum_x / 3.0f * 2.0f *1024);
+        int y = (int)(sum_y / 30.0f * 2.0f*512);
+
+        float w = xorshift32f()*2;
+        int index = (y * 2048 + x) * 3;
+
+        if (index >=2048 * 1024 * 3) continue;
+        int r = starData[index + 0] + (int)(101 * w);
+        int g = starData[index + 1] + (int)(67 * w);
+        int b = starData[index + 2] + (int)(50 * w);
+
+        starData[index + 0] = r > 255 ? 255 : r;
+        starData[index + 1] = g > 255 ? 255 : g;
+        starData[index + 2] = b > 255 ? 255 : b;
+    }
+    for (int i = 0; i<1000; i++){
+        int index = (xorshift32() % (2048 * 1024)) * 3;
+        starData[index] = 255;
+        starData[index + 1] =255;
+        starData[index + 2] =255;
     }
 
-
-
-    GLuint textureID;
-    glGenTextures(1, &textureID);
-    glBindTexture(GL_TEXTURE_2D, textureID);
+    GLuint starMap;
+    glGenTextures(1, &starMap);
+    glBindTexture(GL_TEXTURE_2D, starMap);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 512, 256, 0, GL_RGB, GL_UNSIGNED_BYTE, textureData);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 2048, 1024, 0, GL_RGB, GL_UNSIGNED_BYTE, starData);
+    free(starData);
 
-    GLuint starList = glGenLists(1);
-    glNewList(starList, GL_COMPILE);
-        glPushMatrix();
-            glTranslatef(0.4f, 0.4f, 0.0f);
-            glRotatef(40, 1,1,0);
-            for (int i = 0; i < NUM_STARS; ++i) {
-                float size = xorshift32f();
-                glPointSize(size*2);
-                glBegin(GL_POINTS);
-                glColor4f(1.0f, 1.0f, 1.0f, size*0.8f);
 
-                float x = xorshift32f()-xorshift32f();
-                float y = xorshift32f()-xorshift32f();
-                float z = (xorshift32f()-xorshift32f())/10;
-                glVertex3f(x, y, z);
-            }
-            glEnd();
-        glPopMatrix();
-    glEndList();
+
+
+
+    Mesh gain_igger;
+
+
+
+
+
+
+
+
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
 
     Vec3 vel = {0.0f, 0.0f, 0.0f}; 
     Quat Rvel = {0.0f, 0.0f, 0.0f, 1.0f};
-    float thrust = 0.003f;
+    float thrust = 0.009f;
+    //float thrust = 3000.0f;
 
     MSG msg;
 
@@ -359,37 +447,38 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         float vol = 0.002f;
         IR = __builtin_popcount(keyState&~0x100)/15.0f;
 
+        Vec3 torque = {0,0,0};
+        if (keyState & 0x01) torque.x += 1.0f; // W - pitch up
+        if (keyState & 0x04) torque.x -= 1.0f; // S - pitch down
+        if (keyState & 0x02) torque.y -= 1.0f; // A - yaw left
+        if (keyState & 0x08) torque.y += 1.0f; // D - yaw right
+        if (keyState & 0x10) torque.z -= 1.0f; // Q - roll left
+        if (keyState & 0x20) torque.z += 1.0f; // E - roll right
 
-        float angle = 0.001f;
-        Vec3 right = quat_rotate_vec3(Rvel, (Vec3){1, 0, 0});
-        Vec3 up    = quat_rotate_vec3(Rvel, (Vec3){0, 1, 0});
-        Vec3 fwd   = quat_rotate_vec3(Rvel, (Vec3){0, 0, 1});
+        angVel.x += torque.x * dt;
+        angVel.y += torque.y * dt;
+        angVel.z += torque.z * dt;
+        Quat wQuat = {angVel.x, angVel.y, angVel.z, 0.0f}; // angular velocity quaternion
+        Quat delta = quat_mul(wQuat, rot);
 
-        // Then, apply rotation around these world-space vectors
-        if (keyState & 0x01) {
-            Rvel = quat_mul(quat_axis_angle(right.x, right.y, right.z,  angle), Rvel);
-        }
-        if (keyState & 0x04) {
-            Rvel = quat_mul(quat_axis_angle(right.x, right.y, right.z, -angle), Rvel);
-        }
-        if (keyState & 0x02) {
-            Rvel = quat_mul(quat_axis_angle(up.x, up.y, up.z, -angle), Rvel);
-        }
-        if (keyState & 0x08) {
-            Rvel = quat_mul(quat_axis_angle(up.x, up.y, up.z,  angle), Rvel);
-        }        
+        // Scale the result by 0.5 * dt
+        rot.x += delta.x * 0.5f * dt;
+        rot.y += delta.y * 0.5f * dt;
+        rot.z += delta.z * 0.5f * dt;
+        rot.w += delta.w * 0.5f * dt;  
+
+        rot = quat_normalize(rot);
+        //del?^
 
 
         if (keyState & 0x40) { //dir.y += 1;
             playSoundEffect(SND_BEEP, 60, 0.85f, 0, 3);
         }// Shift
         if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
-        if (keyState & 0x100) { IR+=0.5f; dir.z -= 100000; } // Up
+        if (keyState & 0x100) { IR+=0.5f; dir.z -= 1; } // Up
         if (keyState & 0x200) { dir.z += 1; } // Down
         if (keyState & 0x400) { dir.x -= 1; } // Left
         if (keyState & 0x800) { dir.x += 1; } // Right
-        if (keyState & 0x10) { Rvel = quat_mul(quat_axis_angle(0, 0, 1, -0.001), Rvel); }// Q
-        if (keyState & 0x20) { Rvel = quat_mul(quat_axis_angle(0, 0, 1, 0.001), Rvel); }// E
         if (keyState){
             if(IR<0.8) IR += 0.02f;
         }
@@ -406,36 +495,75 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         vel.y += worldDir.y * thrust;
         vel.z += worldDir.z * thrust;
 
-        pos.x += vel.x;
-        pos.y += vel.y;
-        pos.z += vel.z;
+        pos.x += vel.x * dt;
+        pos.y += vel.y * dt;
+        pos.z += vel.z * dt;
         
         glLoadIdentity();
 
 
-        SetProjectionMatrix(0.0001f, 4.0f);
+        SetProjectionMatrix(0.0001f, 100.0f);
         glPushMatrix();
 
+            glRotatef(view.y, 1,0,0);
+            glRotatef(view.x, 0,1,0);
+
+
+
             //Rotation
-            //Rvel = quat_normalize(Rvel);
-            rot = quat_mul(Rvel, rot);
             rot = quat_normalize(rot);
-            //Quat trot = quat_mul(view, rot);
             float mat[16];
             quat_to_matrix(&rot, mat);
             glMultMatrixf(mat);
 
-            glRotatef(view.x, 0,1,0);
-            glRotatef(view.y, 1,0,0);
-
 
             GLfloat light_pos[] = { 4.0f, 0.0f, 0.0f, 0.0f };
             glLightfv(GL_LIGHT0, GL_POSITION, light_pos);
-
             glDisable(GL_LIGHTING);
 
             //Stars
-            glCallList(starList);
+            glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            glEnable(GL_TEXTURE_2D);
+
+            glPushMatrix();
+                glRotatef(30, 1.0f, 0, 0);
+                glRotatef(30, 0.0f, 1, 0);
+
+                int stacks = 32;
+                int slices = 64;
+                float radius = 10.0f;
+
+                for (int i = 0; i < stacks; ++i) {
+                    float lat0 = pi * (-0.5f + (float)i / stacks);
+                    float lat1 = pi * (-0.5f + (float)(i + 1) / stacks);
+
+                    float y0 = sinf(lat0);
+                    float y1 = sinf(lat1);
+                    float r0 = cosf(lat0);
+                    float r1 = cosf(lat1);
+
+                    glBegin(GL_QUAD_STRIP);
+                    for (int j = 0; j <= slices; ++j) {
+                        float lng = 2.0f * pi * (float)(j) / slices;
+                        float x = cosf(lng);
+                        float z = sinf(lng);
+                        float u = (float)(j) / slices;
+
+                        float v0 =(float)(i) / stacks;
+                        float v1 =(float)(i + 1) / stacks;
+
+                        glTexCoord2f(u, v0);
+                        glVertex3f(x * r0 * radius, y0 * radius, z * r0 * radius);
+
+                        glTexCoord2f(u, v1);
+                        glVertex3f(x * r1 * radius, y1 * radius, z * r1 * radius);
+                    }
+                    glEnd();
+                }
+
+            glPopMatrix();
+            glDisable(GL_TEXTURE_2D);
+
 
             //Sun
             glColor4f(1,1,1,1);
@@ -455,17 +583,18 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
             //far
             SetProjectionMatrix(10000.0f, 4000000000.0f);
-            glPushMatrix(); //2
+            glPushMatrix();
                 glTranslatef(0.0f, 0.0f, -5000000.0f); 
-                drawPlanet(1000000.0f, 20, 20); //p1
+                drawPlanet(1000000.0f, 200, 200); //p1
                 drawRings(1200000.0f, 2000000.0f, 1024, 45); //p1
-            glPopMatrix(); //2
+            glPopMatrix(); 
 
             glClear(GL_DEPTH_BUFFER_BIT);
 
             //near
             SetProjectionMatrix(0.01f, 40000.0f);
-            glPushMatrix(); //2
+            
+            glPushMatrix();
                 glTranslatef(0.0f, 0.0f, -5.0f);
                 glBegin(GL_TRIANGLES);
                 glColor3f(0.0f, 1.0f, 0.0f); 
@@ -473,8 +602,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
                 glVertex3f(-1.0f, -1.0f, 0.0f);
                 glVertex3f(1.0f, -1.0f, 0.0f);
                 glEnd();
-            glPopMatrix(); //2
-        glPopMatrix(); //1
+
+
+
+
+
+                Mesh rock = generate_sphere(67, 67, 1);
+                draw_mesh(&rock);
+            glPopMatrix();
+
+
+
+
+
+
+        glPopMatrix();
 
         //laser
         if (lasers){
@@ -495,35 +637,20 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glVertex3f(0.0f, 0.0f, -128.0f);
             glEnd();
             glEnable(GL_LIGHTING);
-
         }
-
+        glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
 
         glClear(GL_DEPTH_BUFFER_BIT);
 
         // Reset transformations
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        glOrtho(-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f); // Set orthographic projection for HUD
+
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity(); 
-        
+        //redundancy check ^
 
-        // HUD 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_LIGHTING);
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-            // Main HUD texture
-            glEnable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, textureID);
-    
-           glBegin(GL_QUADS);
-            glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, -1.0f);
-            glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, -1.0f);
-            glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, -0.2f);
-            glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -0.2f);
-            glEnd();
-            glDisable(GL_TEXTURE_2D);
+
         
         dRF += (RF-dRF)*0.01;
         dIR += (IR-dIR)*0.01;
@@ -531,14 +658,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         dRAD += (RAD - dRAD)*0.01;
         float sig[13];
 
-        for (int i = 0; i < 4; i++)
-        sig[i] = xorshift32f()/10 + dRF + (dIR - dRF) * i / 3.0f;
+        for (int i = 0; i < 4; i++) sig[i] = xorshift32f()/10 + dRF + (dIR - dRF) * i / 3.0f;
 
-        for (int i = 0; i < 4; i++)
-        sig[4 + i] =xorshift32f()/10+ dIR + (dVIS - dIR) * i / 3.0f;
+        for (int i = 0; i < 4; i++) sig[4 + i] =xorshift32f()/10+ dIR + (dVIS - dIR) * i / 3.0f;
 
-        for (int i = 0; i < 5; i++)
-        sig[8 + i] =xorshift32f()/10+ dVIS + (dRAD - dVIS) * i / 4.0f;
+        for (int i = 0; i < 5; i++) sig[8 + i] =xorshift32f()/10+ dVIS + (dRAD - dVIS) * i / 4.0f;
+
         //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
        glBegin(GL_LINES);
 
@@ -568,6 +693,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_CREATE:
             ShowCursor(FALSE);
             SetCapture(hwnd);
+            {
+                // Clip cursor to client area
+                RECT rect;
+                GetClientRect(hwnd, &rect);
+                POINT ul = {rect.left, rect.top};
+                POINT lr = {rect.right, rect.bottom};
+                ClientToScreen(hwnd, &ul);
+                ClientToScreen(hwnd, &lr);
+                RECT clipRect = {ul.x, ul.y, lr.x, lr.y};
+                ClipCursor(&clipRect);
+            }
             break;
         case WM_SIZE:
             GLsizei width = LOWORD(lParam);
@@ -576,11 +712,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             glViewport(0, 0, width, height);
             aspectRatio = (float)width / (float)height;
             SetProjectionMatrix(1.0f, 4000000000.0f);
+            {
+                // Update clip region on resize
+                RECT rect;
+                GetClientRect(hwnd, &rect);
+                POINT ul = {rect.left, rect.top};
+                POINT lr = {rect.right, rect.bottom};
+                ClientToScreen(hwnd, &ul);
+                ClientToScreen(hwnd, &lr);
+                RECT clipRect = {ul.x, ul.y, lr.x, lr.y};
+                ClipCursor(&clipRect);
+            }
             break;
         case WM_CLOSE:
+            ClipCursor(NULL); // Release cursor clip
             PostQuitMessage(0);
             break;
         case WM_DESTROY:
+            ClipCursor(NULL); // Release cursor clip
             wglMakeCurrent(NULL, NULL);
             wglDeleteContext(hRC);
             hRC = NULL;
@@ -631,10 +780,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             ClientToScreen(hwnd, &centerScreen);
             SetCursorPos(centerScreen.x, centerScreen.y);
 
-            //rot = quat_mul(quat_axis_angle(0, 1, 0, (LOWORD(lParam) - centerX)*0.01), rot);//qYaw
-            //rot = quat_mul(quat_axis_angle(1, 0, 0, (HIWORD(lParam) - centerY)*0.01), rot);//qPitch
-            //view.x += (LOWORD(lParam) - centerX)*0.01;
-            //view.y += (HIWORD(lParam) - centerY)*0.01;
+            view.x += (LOWORD(lParam) - centerX)*0.01;
+            view.y += (HIWORD(lParam) - centerY)*0.01;
+            if (view.y > 89.9f) view.y = 89.9f;
+            if (view.y < -89.9f) view.y = -89.9f;
 
             break;
         case WM_LBUTTONDOWN:
