@@ -1,13 +1,12 @@
+#include <math.h>
 #include <windows.h>
 #include <gl/gl.h>
 #include "defs.h"
+#include <stdbool.h>
 
-typedef struct {
-    float* vertices;
-    int vertex_count;
-    float* normals;
-    float* colors; // RGB per vertex
-} Mesh;
+
+
+
 
 HGLRC hRC; // OpenGL Rendering Context
 HDC hDC;   // Device Context
@@ -21,115 +20,230 @@ BOOL lasers = FALSE;
 
 Quat rot = {0.0f, 0.0f, 0.0f, 1.0f}; //Pitch, Yaw, Roll, W
 Vec3 angVel = {0}; // current angular velocity vector (radians/sec)
-float dt = 0.01;
 
 Vec2 view = {0.0f, 0.0f};
 Vec3 pos = {0.0f, 0.0f, 0.0f};
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-void playSoundEffect(int type, float pitch, float volume, float pan, int channel);
-void stopSound(int channel);
 
-Quat quat_mul(Quat a, Quat b) {
-    Quat q;
-    q.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
-    q.x = a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y;
-    q.y = a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x;
-    q.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
-    return q;
+#define EPSILON 1e-5f
+int vec3_equal(Vec3 a, Vec3 b) {
+    return fabsf(a.x - b.x) < EPSILON &&
+           fabsf(a.y - b.y) < EPSILON &&
+           fabsf(a.z - b.z) < EPSILON;
 }
-Quat quat_axis_angle(float x, float y, float z, float angle_rad) {
-    float s = sinf(angle_rad * 0.5f);
-    Quat q;
-    q.x = x * s;
-    q.y = y * s;
-    q.z = z * s;
-    q.w = cosf(angle_rad * 0.5f);
-    return q;
+Vec3 vec3_sub(Vec3 a, Vec3 b) {
+    return (Vec3){ a.x - b.x, a.y - b.y, a.z - b.z };
 }
-Quat quat_normalize(Quat q) {
-    float mag = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
-    q.x /= mag;
-    q.y /= mag;
-    q.z /= mag;
-    q.w /= mag;
-    return q;
-}
-static inline void quat_to_matrix(const Quat* q, float* m) {
-    float x2 = q->x + q->x, y2 = q->y + q->y, z2 = q->z + q->z;
-    float xx = q->x * x2, yy = q->y * y2, zz = q->z * z2;
-    float xy = q->x * y2, xz = q->x * z2, yz = q->y * z2;
-    float wx = q->w * x2, wy = q->w * y2, wz = q->w * z2;
-
-    m[0] = 1.0f - (yy + zz);
-    m[1] = xy + wz;
-    m[2] = xz - wy;
-    m[3] = 0.0f;
-
-    m[4] = xy - wz;
-    m[5] = 1.0f - (xx + zz);
-    m[6] = yz + wx;
-    m[7] = 0.0f;
-
-    m[8]  = xz + wy;
-    m[9]  = yz - wx;
-    m[10] = 1.0f - (xx + yy);
-    m[11] = 0.0f;
-
-    m[12] = m[13] = m[14] = 0.0f;
-    m[15] = 1.0f;
-}
-Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
-    // q * v * conj(q)
-    Vec3 out;
-    
-    Vec3 u = { q.x, q.y, q.z };
-    
-    Vec3 uv = {
-        u.y * v.z - u.z * v.y,
-        u.z * v.x - u.x * v.z,
-        u.x * v.y - u.y * v.x
+Vec3 vec3_cross(Vec3 a, Vec3 b) {
+    return (Vec3){
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
     };
-    
-    Vec3 uuv = {
-        u.y * uv.z - u.z * uv.y,
-        u.z * uv.x - u.x * uv.z,
-        u.x * uv.y - u.y * uv.x
+}
+float vec3_length(Vec3 v) {
+    return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+Vec3 vec3_normalize(Vec3 v) {
+    float len = vec3_length(v);
+    return len > EPSILON ? (Vec3){ v.x / len, v.y / len, v.z / len } : (Vec3){ 0, 0, 0 };
+}
+Vec3 vec3_add(Vec3 a, Vec3 b) {
+    return (Vec3){ a.x + b.x, a.y + b.y, a.z + b.z };
+}
+typedef struct {
+    Vec3 position;
+    Vec3 accumulated;
+    int count;
+} VertexNormalEntry;
+
+typedef struct {
+    VertexNormalEntry* data;
+    int count;
+    int capacity;
+} NormalMap;
+
+void normal_map_init(NormalMap* map) {
+    map->capacity = 256;
+    map->count = 0;
+    map->data = malloc(sizeof(VertexNormalEntry) * map->capacity);
+}
+
+void normal_map_add(NormalMap* map, Vec3 position, Vec3 normal) {
+    for (int i = 0; i < map->count; ++i) {
+        if (vec3_equal(map->data[i].position, position)) {
+            map->data[i].accumulated = vec3_add(map->data[i].accumulated, normal);
+            map->data[i].count += 1;
+            return;
+        }
+    }
+
+    if (map->count >= map->capacity) {
+        map->capacity *= 2;
+        map->data = realloc(map->data, sizeof(VertexNormalEntry) * map->capacity);
+    }
+
+    map->data[map->count].position = position;
+    map->data[map->count].accumulated = normal;
+    map->data[map->count].count = 1;
+    map->count += 1;
+}
+
+Vec3 normal_map_get(NormalMap* map, Vec3 position) {
+    for (int i = 0; i < map->count; ++i) {
+        if (vec3_equal(map->data[i].position, position)) {
+            return vec3_normalize(map->data[i].accumulated);
+        }
+    }
+    return (Vec3){ 0, 0, 0 };
+}
+
+void normal_map_free(NormalMap* map) {
+    free(map->data);
+}
+void smooth_normals(Mesh* mesh) {
+    if (!mesh || mesh->vertex_count % 3 != 0) return;
+
+    NormalMap map;
+    normal_map_init(&map);
+
+    for (int i = 0; i < mesh->vertex_count; i += 3) {
+        Vec3 a = mesh->vertices[i];
+        Vec3 b = mesh->vertices[i + 1];
+        Vec3 c = mesh->vertices[i + 2];
+
+        Vec3 u = vec3_sub(b, a);
+        Vec3 v = vec3_sub(c, a);
+        Vec3 face_normal = vec3_normalize(vec3_cross(u, v));
+
+        normal_map_add(&map, a, face_normal);
+        normal_map_add(&map, b, face_normal);
+        normal_map_add(&map, c, face_normal);
+    }
+
+    for (int i = 0; i < mesh->vertex_count; ++i) {
+        mesh->normals[i] = normal_map_get(&map, mesh->vertices[i]);
+    }
+
+    normal_map_free(&map);
+}
+
+
+
+
+void generate_asteroid_cubesphere(Mesh* mesh, Vec3 center, float radius, Color4 color, int subdivisions) {
+    if (subdivisions < 1) subdivisions = 1;
+
+    int quads_per_face = subdivisions * subdivisions;
+    int total_quads = 6 * quads_per_face;
+    int estimated_triangles = total_quads * 2;
+
+    init_mesh(mesh, estimated_triangles * 3);
+
+    float step = 2.0f / subdivisions;
+
+    Vec3 face_normals[6] = {
+        {  1,  0,  0 }, // +X
+        { -1,  0,  0 }, // -X
+        {  0,  1,  0 }, // +Y
+        {  0, -1,  0 }, // -Y
+        {  0,  0,  1 }, // +Z
+        {  0,  0, -1 }  // -Z
     };
 
-    uv.x *= 2.0f * q.w;
-    uv.y *= 2.0f * q.w;
-    uv.z *= 2.0f * q.w;
+    // Loop through each face
+    for (int f = 0; f < 6; f++) {
+        Vec3 normal = face_normals[f];
 
-    uuv.x *= 2.0f;
-    uuv.y *= 2.0f;
-    uuv.z *= 2.0f;
+        Vec3 axis_a = { 0, 0, 0 };
+        Vec3 axis_b = { 0, 0, 0 };
 
-    out.x = v.x + uv.x + uuv.x;
-    out.y = v.y + uv.y + uuv.y;
-    out.z = v.z + uv.z + uuv.z;
+        if (fabsf(normal.x) > 0.5f) {
+            axis_a.z = 1;
+            axis_b.y = 1;
+        } else if (fabsf(normal.y) > 0.5f) {
+            axis_a.x = 1;
+            axis_b.z = 1;
+        } else {
+            axis_a.x = 1;
+            axis_b.y = 1;
+        }
 
-    return out;
+        for (int i = 0; i < subdivisions; i++) {
+            for (int j = 0; j < subdivisions; j++) {
+                float x0 = -1.0f + step * i;
+                float x1 = x0 + step;
+                float y0 = -1.0f + step * j;
+                float y1 = y0 + step;
+
+                Vec3 p00 = {
+                    normal.x + axis_a.x * x0 + axis_b.x * y0,
+                    normal.y + axis_a.y * x0 + axis_b.y * y0,
+                    normal.z + axis_a.z * x0 + axis_b.z * y0
+                };
+                Vec3 p10 = {
+                    normal.x + axis_a.x * x1 + axis_b.x * y0,
+                    normal.y + axis_a.y * x1 + axis_b.y * y0,
+                    normal.z + axis_a.z * x1 + axis_b.z * y0
+                };
+                Vec3 p01 = {
+                    normal.x + axis_a.x * x0 + axis_b.x * y1,
+                    normal.y + axis_a.y * x0 + axis_b.y * y1,
+                    normal.z + axis_a.z * x0 + axis_b.z * y1
+                };
+                Vec3 p11 = {
+                    normal.x + axis_a.x * x1 + axis_b.x * y1,
+                    normal.y + axis_a.y * x1 + axis_b.y * y1,
+                    normal.z + axis_a.z * x1 + axis_b.z * y1
+                };
+
+                // Project to sphere and apply deformation
+                Vec3 verts[4] = { p00, p10, p01, p11 };
+                Vec3 sphere_verts[4];
+
+                for (int v = 0; v < 4; v++) {
+                    Vec3 dir = verts[v];
+                    float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+                    if (len > 0.0001f) {
+                        dir.x /= len;
+                        dir.y /= len;
+                        dir.z /= len;
+                    }
+
+                    // BIG base shape
+                    float base_shape = fbm(dir, 3, 0.6f, 1.5f);
+                    float deform1 = 1.0f + base_shape * 0.7f;
+
+                    // DETAIL surface bumps
+                    Vec3 bump_dir = { dir.x * 3.0f, dir.y * 3.0f, dir.z * 3.0f };
+                    float surface_noise = fbm(bump_dir, 5, 0.5f, 2.5f);
+                    float deform2 = 1.0f + surface_noise * 0.2f;
+
+                    float deform = deform1 * deform2;
+
+                    sphere_verts[v].x = center.x + dir.x * radius * deform;
+                    sphere_verts[v].y = center.y + dir.y * radius * deform;
+                    sphere_verts[v].z = center.z + dir.z * radius * deform;
+                }
+
+            BOOL flip = (f == 0 || f == 2 || f == 5); // +X, +Y, -Z
+
+            if (flip) {
+                add_triangle(mesh, sphere_verts[0], sphere_verts[2], sphere_verts[1], color);
+                add_triangle(mesh, sphere_verts[2], sphere_verts[3], sphere_verts[1], color);
+            } else {
+                add_triangle(mesh, sphere_verts[0], sphere_verts[1], sphere_verts[2], color);
+                add_triangle(mesh, sphere_verts[2], sphere_verts[1], sphere_verts[3], color);
+            }
+            }
+        }
+    }
 }
-Quat quat_conjugate(Quat q) {
-    return (Quat){ -q.x, -q.y, -q.z, q.w };
-}
-void SetProjectionMatrix(float zNear, float zFar) {
-    float fovY = 90.0f;
-    float f = 1.0f / meTanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
-    float mat[16] = {0};
+    
 
-    mat[0] = f / aspectRatio;
-    mat[5] = f;
-    mat[10] = (zFar + zNear) / (zNear - zFar);
-    mat[11] = -1.0f;
-    mat[14] = (2.0f * zFar * zNear) / (zNear - zFar);
-    mat[15] = 0.0f;
 
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(mat);
-    glMatrixMode(GL_MODELVIEW);
-}
+
 //0 - 1
 float value_noise1d(float x) {
     int xi = (int)floorf(x);
@@ -144,81 +258,6 @@ float value_noise1d(float x) {
     return v0 * (1 - xf) + v1 * xf;
 }
 
-
-void draw_mesh(const Mesh* mesh) {
-    if (!mesh || mesh->vertex_count <= 0 || !mesh->vertices) return;
-
-    glBegin(GL_TRIANGLES);
-    for (int i = 0; i < mesh->vertex_count; ++i) {
-        if (mesh->normals) glNormal3fv(&mesh->normals[i * 3]);
-        if (mesh->colors) glColor3fv(&mesh->colors[i * 3]);
-        glVertex3fv(&mesh->vertices[i * 3]);
-    }
-    glEnd();
-}
-
-Mesh generate_sphere(int slices, int stacks, float radius) {
-    int tris_per_quad = 6;
-    int total_quads = slices * stacks;
-    int vertex_count = total_quads * tris_per_quad;
-
-    float* verts = malloc(sizeof(float) * vertex_count * 3);
-    float* norms = malloc(sizeof(float) * vertex_count * 3);
-    float* cols  = malloc(sizeof(float) * vertex_count * 3);
-
-    int index = 0;
-
-    for (int i = 0; i < slices; ++i) {
-        float theta1 = (float)i / slices * 2.0f * pi;
-        float theta2 = (float)(i + 1) / slices * 2.0f * pi;
-
-        for (int j = 0; j < stacks; ++j) {
-            float phi1 = (float)j / stacks * pi - pi / 2.0f;
-            float phi2 = (float)(j + 1) / stacks * pi - pi / 2.0f;
-
-            float x[4], y[4], z[4];
-
-            x[0] = cosf(phi1) * cosf(theta1);
-            y[0] = sinf(phi1);
-            z[0] = cosf(phi1) * sinf(theta1);
-
-            x[1] = cosf(phi1) * cosf(theta2);
-            y[1] = sinf(phi1);
-            z[1] = cosf(phi1) * sinf(theta2);
-
-            x[2] = cosf(phi2) * cosf(theta2);
-            y[2] = sinf(phi2);
-            z[2] = cosf(phi2) * sinf(theta2);
-
-            x[3] = cosf(phi2) * cosf(theta1);
-            y[3] = sinf(phi2);
-            z[3] = cosf(phi2) * sinf(theta1);
-
-            int tri_indices[6] = {0, 1, 2, 2, 3, 0};
-
-            for (int k = 0; k < 6; ++k) {
-                int vi = tri_indices[k];
-
-                verts[index * 3 + 0] = x[vi] * radius;
-                verts[index * 3 + 1] = y[vi] * radius;
-                verts[index * 3 + 2] = z[vi] * radius;
-
-                norms[index * 3 + 0] = x[vi];
-                norms[index * 3 + 1] = y[vi];
-                norms[index * 3 + 2] = z[vi];
-
-                cols[index * 3 + 0] = 0.6f;
-                cols[index * 3 + 1] = 0.6f;
-                cols[index * 3 + 2] = 0.6f;
-
-                index++;
-            }
-        }
-    }
-
-    Mesh sphere = { verts, vertex_count, norms, cols };
-    return sphere;
-}
 
 void drawPlanet(float radius, int lats, int longs) {
     for (int i = 0; i <= lats; ++i) {
@@ -253,19 +292,23 @@ void drawPlanet(float radius, int lats, int longs) {
             float band0 = 0.25f + 0.75f * n0;
             float band1 = 0.25f + 0.75f * n1;
 
-            float r0 = dark_brown[0] + (light_tan[0] - dark_brown[0]) * band0;
-            float g0 = dark_brown[1] + (light_tan[1] - dark_brown[1]) * band0;
-            float b0 = dark_brown[2] + (light_tan[2] - dark_brown[2]) * band0;
+            Color3 c0 = {
+            dark_brown[0] + (light_tan[0] - dark_brown[0]) * band0,
+            dark_brown[1] + (light_tan[1] - dark_brown[1]) * band0,
+            dark_brown[2] + (light_tan[2] - dark_brown[2]) * band0,
+            };
 
-            float r1 = dark_brown[0] + (light_tan[0] - dark_brown[0]) * band1;
-            float g1 = dark_brown[1] + (light_tan[1] - dark_brown[1]) * band1;
-            float b1 = dark_brown[2] + (light_tan[2] - dark_brown[2]) * band1;
+            Color3 c1 = {
+            dark_brown[0] + (light_tan[0] - dark_brown[0]) * band1,
+            dark_brown[1] + (light_tan[1] - dark_brown[1]) * band1,
+            dark_brown[2] + (light_tan[2] - dark_brown[2]) * band1,
+            };
 
-            glColor3f(r0, g0, b0);
+            glColor3f(c0.r, c0.g, c0.b);
             glNormal3f(x * zr0, y * zr0, z0); 
             glVertex3f(radius * x * zr0, radius * y * zr0, radius * z0);
 
-            glColor3f(r1, g1, b1);
+            glColor3f(c1.r, c1.g, c1.b);
             glNormal3f(x * zr1, y * zr1, z1); 
             glVertex3f(radius * x * zr1, radius * y * zr1, radius * z1);
         }
@@ -280,30 +323,26 @@ void drawRings(float innerRadius, float outerRadius, int segments, int bands) {
         float r1 = r0 + bandStep;
 
         float base = 0.6f + 0.3f * sin(b * 0.5f); 
-        float red   = base * 0.3f;    
-        float green = base * 0.6f;   
-        float blue  = base * 1.0f;       
-        float alpha = 0.3f + 0.5f * fabs(cos(b * 0.3f));
+        Color4 hue;
+        hue.r= base * 0.3f;    
+        hue.g = base * 0.6f;   
+        hue.b  = base * 1.0f;       
+        hue.a = 0.3f + 0.5f * fabs(cos(b * 0.3f));
         glBegin(GL_TRIANGLE_STRIP);
         for (int i = 0; i <= segments; ++i) {
             float angle = 2 * pi * i / segments;
-            float x = cos(angle);
-            float y = sin(angle);
+            Vec2 vec = {cos(angle), sin(angle)};
 
-            glNormal3f((x+1)/2, y, 0.0f);
-            glColor4f(red, green, blue, alpha); glVertex2f(x * r0, y * r0);
-            glNormal3f((x+1)/2, y, 0.0f);
-            glColor4f(red, green, blue, alpha); glVertex2f(x * r1, y * r1);
+            glNormal3f(vec.x/2, vec.y, 0.0f);
+            glColor4fv(hue.data); glVertex2f(vec.x * r0, vec.y * r0);
+            glNormal3f(vec.x/2, vec.y, 0.0f);
+            glColor4fv(hue.data); glVertex2f(vec.x * r1, vec.y * r1);
         }
         glEnd();
     }
 
 }
 
-
-void tick() {
-    
-}
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     
@@ -351,7 +390,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     wglMakeCurrent(hDC, hRC);
 
-    glShadeModel(GL_SMOOTH);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glDepthFunc(GL_LEQUAL);
 
@@ -382,10 +420,15 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         float w = xorshift32f()*2;
         int index = (y * 2048 + x) * 3;
 
+        x = (x - 1024) * ((x - 1024) >= 0 ? 1 : -1);
+
         if (index >=2048 * 1024 * 3) continue;
         int r = starData[index + 0] + (int)(101 * w);
-        int g = starData[index + 1] + (int)(67 * w);
-        int b = starData[index + 2] + (int)(50 * w);
+        int g = starData[index + 1] + (int)(77 * w * (1+x/6024.0f));
+        int b = starData[index + 2] + (int)(59 * w * (1+(x/1248.0f)*(x/1248.0f)));
+
+        //        int g = starData[index + 1] + (int)(77 * w + x/70.0f);
+        //int b = starData[index + 2] + (int)(59 * w + x/30.0f);
 
         starData[index + 0] = r > 255 ? 255 : r;
         starData[index + 1] = g > 255 ? 255 : g;
@@ -409,14 +452,36 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 
 
-
-    Mesh gain_igger;
-
-
-
-
-
-
+/*
+    Mesh tmp_ship;
+    init_mesh(&tmp_ship, 64);
+    add_cube(&tmp_ship, (Vec3){0,0,0}, 1, (Color4){1.0f,1.0f,1.0f,1.0f});
+    add_triangle(&tmp_ship, (Vec3){3, 2, 1}, (Vec3){1, 1, 1}, (Vec3){1, 2, 3}, (Color4){1.0f, 0.0f, 0.0f, 1.0f});
+    add_triangle(&tmp_ship, (Vec3){2,0,-1}, (Vec3){2, 0, -2}, (Vec3){2, 1, -1.5f}, (Color4){0.0f, 1.0f, 1.0f, 1.0f});
+    Object tmp_obj = {
+        .position = {0.0f, 0.0f, -3.0f},
+        .rotation = {0.0f, 0.0f, 0.0f, 1.0f},
+        .scale = {1.0f, 1.0f, 1.0f},
+        .mesh = tmp_ship,
+        .flags = 0,
+        .components = NULL
+    };
+*/
+    Mesh asteroid;
+    generate_asteroid_cubesphere(&asteroid, (Vec3){0.0f, 0.0f, -5.0f}, 1.0f, (Color4){0.5f, 0.5f, 0.5f, 1.0f}, 256);
+    smooth_normals(&asteroid);
+    Object asteroid_obj = {
+        .position = {0.0f, 0.0f, -5.0f},
+        .rotation = {0.0f, 0.0f, 0.0f, 1.0f},
+        .scale = {1.0f, 1.0f, 1.0f},
+        .mesh = asteroid,
+        .flags = 0,
+        .components = NULL
+    };
+    GLuint asteroids = glGenLists(1);
+    glNewList(asteroids, GL_COMPILE);
+        draw_mesh(&asteroid, GL_TRIANGLES);
+    glEndList();
 
 
 
@@ -425,14 +490,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     Vec3 vel = {0.0f, 0.0f, 0.0f}; 
     Quat Rvel = {0.0f, 0.0f, 0.0f, 1.0f};
-    float thrust = 0.009f;
+    float thrust = 0.03f;
     //float thrust = 3000.0f;
+    float dt = 0.018;
+
 
     MSG msg;
 
     glEnable(GL_LIGHT0);
     glEnable(GL_COLOR_MATERIAL);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    glShadeModel(GL_SMOOTH);
     
     //MAIN LOOP
     while (GetMessage(&msg, NULL, 0, 0)) {
@@ -441,6 +513,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_LIGHTING);
         glEnable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         Vec3 dir = {0};
@@ -472,7 +545,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 
         if (keyState & 0x40) { //dir.y += 1;
-            playSoundEffect(SND_BEEP, 60, 0.85f, 0, 3);
+            //playSoundEffect(SND_BEEP, 60, 0.85f, 0, 3);
+            dir.y += 1;
         }// Shift
         if (keyState & 0x80) { dir.y -= 1; }// Ctrl   
         if (keyState & 0x100) { IR+=0.5f; dir.z -= 1; } // Up
@@ -526,7 +600,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glEnable(GL_TEXTURE_2D);
 
             glPushMatrix();
-                glRotatef(30, 1.0f, 0, 0);
+                glRotatef(60, 1.0f, 0, 1);
                 glRotatef(30, 0.0f, 1, 0);
 
                 int stacks = 32;
@@ -582,36 +656,32 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glTranslatef(-pos.x, -pos.y, -pos.z);
 
             //far
+            glEnable(GL_CULL_FACE);
             SetProjectionMatrix(10000.0f, 4000000000.0f);
             glPushMatrix();
                 glTranslatef(0.0f, 0.0f, -5000000.0f); 
+                glRotatef(-60, 1.0f, 0, 0);
                 drawPlanet(1000000.0f, 200, 200); //p1
                 drawRings(1200000.0f, 2000000.0f, 1024, 45); //p1
-            glPopMatrix(); 
 
+            glPopMatrix(); 
             glClear(GL_DEPTH_BUFFER_BIT);
 
             //near
             SetProjectionMatrix(0.01f, 40000.0f);
-            
-            glPushMatrix();
-                glTranslatef(0.0f, 0.0f, -5.0f);
-                glBegin(GL_TRIANGLES);
-                glColor3f(0.0f, 1.0f, 0.0f); 
-                glVertex3f(0.0f, 1.0f, 0.0f);
-                glVertex3f(-1.0f, -1.0f, 0.0f);
-                glVertex3f(1.0f, -1.0f, 0.0f);
-                glEnd();
-
-
-
-
-
-                Mesh rock = generate_sphere(67, 67, 1);
-                draw_mesh(&rock);
-            glPopMatrix();
-
-
+            /*
+            tmp_obj.rotation = quat_mul(tmp_obj.rotation,  quat_axis_angle(0.0f, 1.0f, 0.0f, 0.01f));
+            Vec3 move = direction_between(tmp_obj.position, pos);
+            normalize(&move);
+            multiply3f(&move, 0.01f);
+            tmp_obj.position.x += move.x;
+            tmp_obj.position.y += move.y;
+            tmp_obj.position.z += move.z;
+            */
+            //draw_object(&tmp_obj, GL_TRIANGLES);
+            glCallList(asteroids);
+            //draw_object(&asteroid_obj, GL_TRIANGLES);
+            //debug_object(&tmp_obj);
 
 
 
@@ -780,8 +850,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             ClientToScreen(hwnd, &centerScreen);
             SetCursorPos(centerScreen.x, centerScreen.y);
 
-            view.x += (LOWORD(lParam) - centerX)*0.01;
-            view.y += (HIWORD(lParam) - centerY)*0.01;
+            //view.x += (LOWORD(lParam) - centerX)*0.01;
+            //view.y += (HIWORD(lParam) - centerY)*0.01;
             if (view.y > 89.9f) view.y = 89.9f;
             if (view.y < -89.9f) view.y = -89.9f;
 
