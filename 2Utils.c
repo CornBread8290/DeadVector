@@ -13,6 +13,14 @@ uint32_t xorshift32() {
 float xorshift32f() {
     return (float)xorshift32() / 4294967295.0f;
 }
+uint32_t wangHash(uint32_t seed) {
+    seed = (seed ^ 61) ^ (seed >> 16);
+    seed = seed + (seed << 3);
+    seed = seed ^ (seed >> 4);
+    seed = seed * 0x27d4eb2d;
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
 float meTanf(float num){
     return sin(num) / cos(num);
 }
@@ -73,7 +81,33 @@ float fbm(Vec3 p, int octaves, float persistence, float lacunarity) {
     return total;
 }
 
-
+Vec3 vec3_normalize(Vec3 v) {
+    float length = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (length > 0.00001f) {
+        v.x /= length;
+        v.y /= length;
+        v.z /= length;
+    } else {
+        v = (Vec3){0, 1, 0}; // fallback
+    }
+    return v;
+}
+Vec3 vec3_sub(Vec3 a, Vec3 b) {
+    return (Vec3){ a.x - b.x, a.y - b.y, a.z - b.z };
+}
+Vec3 vec3_cross(Vec3 a, Vec3 b) {
+    return (Vec3){
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}   
+Vec3 vec3_add(Vec3 a, Vec3 b) {
+    return (Vec3){ a.x + b.x, a.y + b.y, a.z + b.z };
+}
+Vec3 vec3_scale(Vec3 v, float s) {
+    return (Vec3){ v.x * s, v.y * s, v.z * s };
+}
 Quat quat_mul(Quat a, Quat b) {
     Quat q;
     q.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
@@ -207,15 +241,25 @@ void init_mesh(Mesh* mesh, int initial_capacity) {
     mesh->vertex_count = 0;
     mesh->vertex_capacity = initial_capacity;
 
-    mesh->vertices = malloc(sizeof(Vec3) * initial_capacity);
-    mesh->normals = malloc(sizeof(Vec3) * initial_capacity);
-    mesh->colors = malloc(sizeof(Color4) * initial_capacity);
-    mesh->uvs = malloc(sizeof(UV) * initial_capacity);
+    mesh->index_count = 0;
+    mesh->index_capacity = initial_capacity * 3; // rough estimate
 
+    mesh->vertices = malloc(sizeof(Vec3) * mesh->vertex_capacity);
+    mesh->normals = malloc(sizeof(Vec3) * mesh->vertex_capacity);
+    mesh->colors = malloc(sizeof(Color4) * mesh->vertex_capacity);
+    mesh->uvs = malloc(sizeof(UV) * mesh->vertex_capacity);
+    mesh->indices = malloc(sizeof(unsigned int) * mesh->index_capacity);
     mesh->flags = (1 << 0) | (1 << 1) | (1 << 2); // normals, colors, uvs
+
+    mesh->material.ambient  = (Color4){ 0.2f, 0.2f, 0.2f, 1.0f };
+    mesh->material.diffuse  = (Color4){ 0.6f, 0.6f, 0.6f, 1.0f };
+    mesh->material.specular = (Color4){ 1.0f, 1.0f, 1.0f, 1.0f };
+    mesh->material.shininess = 32.0f;
+
 }
 void draw_mesh(const Mesh* mesh, GLenum primitive_type) {
-    if (!mesh || mesh->vertex_count <= 0 || !mesh->vertices) return;
+    
+    if (!mesh || mesh->index_count <= 0 || !mesh->vertices || !mesh->indices) return;
 
     glEnableClientState(GL_VERTEX_ARRAY);
     glVertexPointer(3, GL_FLOAT, 0, mesh->vertices);
@@ -235,15 +279,22 @@ void draw_mesh(const Mesh* mesh, GLenum primitive_type) {
         glTexCoordPointer(2, GL_FLOAT, 0, mesh->uvs);
     }
 
-    glDrawArrays(primitive_type, 0, mesh->vertex_count);
+    glDrawElements(primitive_type, mesh->index_count, GL_UNSIGNED_INT, mesh->indices);
 
     glDisableClientState(GL_VERTEX_ARRAY);
     if (mesh->flags & (1 << 0)) glDisableClientState(GL_NORMAL_ARRAY);
     if (mesh->flags & (1 << 1)) glDisableClientState(GL_COLOR_ARRAY);
     if (mesh->flags & (1 << 2)) glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
+int find_or_add_vertex(Mesh* mesh, Vec3 pos, Color4 color, UV uv) {
+    for (int i = 0; i < mesh->vertex_count; i++) {
+        if (memcmp(&mesh->vertices[i], &pos, sizeof(Vec3)) == 0 &&
+            memcmp(&mesh->colors[i], &color, sizeof(Color4)) == 0 &&
+            memcmp(&mesh->uvs[i], &uv, sizeof(UV)) == 0) {
+            return i;
+        }
+    }
 
-void add_vertex(Mesh* mesh, Vec3 pos, Normal normal, Color4 color, UV uv) {
     if (mesh->vertex_count >= mesh->vertex_capacity) {
         mesh->vertex_capacity *= 2;
         mesh->vertices = realloc(mesh->vertices, sizeof(Vec3) * mesh->vertex_capacity);
@@ -252,112 +303,17 @@ void add_vertex(Mesh* mesh, Vec3 pos, Normal normal, Color4 color, UV uv) {
         mesh->uvs = realloc(mesh->uvs, sizeof(UV) * mesh->vertex_capacity);
     }
 
-    mesh->vertices[mesh->vertex_count] = pos;
-    mesh->normals[mesh->vertex_count] = normal;
-    mesh->colors[mesh->vertex_count] = color;
-    mesh->uvs[mesh->vertex_count] = uv;
-
-    mesh->vertex_count++;
-}
-void add_triangle(Mesh* mesh, Vec3 a, Vec3 b, Vec3 c, Color4 color) {
-    // Compute normal
-    Vec3 u = { b.x - a.x, b.y - a.y, b.z - a.z };
-    Vec3 v = { c.x - a.x, c.y - a.y, c.z - a.z };
-    Normal n = {
-        u.y * v.z - u.z * v.y,
-        u.z * v.x - u.x * v.z,
-        u.x * v.y - u.y * v.x
-    };
-
-    // normalize n
-    float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
-    if (len > 0.0f) {
-        n.x /= len; n.y /= len; n.z /= len;
-    }
-
-
-    UV uv = {0.0f, 0.0f}; // can randomize or generate later
-    add_vertex(mesh, a, n, color, uv);
-    add_vertex(mesh, b, n, color, uv);
-    add_vertex(mesh, c, n, color, uv);
-}
-
-void add_cube(Mesh* mesh, Vec3 origin, float size, Color4 color) {
-    float s = size * 0.5f;
-    Vec3 p[] = {
-        {origin.x - s, origin.y - s, origin.z - s},
-        {origin.x + s, origin.y - s, origin.z - s},
-        {origin.x + s, origin.y + s, origin.z - s},
-        {origin.x - s, origin.y + s, origin.z - s},
-        {origin.x - s, origin.y - s, origin.z + s},
-        {origin.x + s, origin.y - s, origin.z + s},
-        {origin.x + s, origin.y + s, origin.z + s},
-        {origin.x - s, origin.y + s, origin.z + s},
-    };
-
-int faces[][6] = {
-    {0, 3, 2, 2, 1, 0}, // back face (normal towards -Z)
-    {4, 5, 6, 6, 7, 4}, // front face (normal towards +Z)
-    {0, 4, 7, 7, 3, 0}, // left face (normal towards -X)
-    {1, 2, 6, 6, 5, 1}, // right face (normal towards +X)
-    {3, 7, 6, 6, 2, 3}, // top
-    {0, 1, 5, 5, 4, 0}, // bottom face (normal towards -Y)
-};
-    for (int i = 0; i < 6; i++) {
-        add_triangle(mesh, p[faces[i][0]], p[faces[i][1]], p[faces[i][2]], color);
-        add_triangle(mesh, p[faces[i][3]], p[faces[i][4]], p[faces[i][5]], color);
-    }
-}
-
-void extrude_last_triangle(Mesh* mesh, float distance, Color4 color) {
-    if (mesh->vertex_count < 3) return;
-
-    int i = mesh->vertex_count - 3;
-
-    Vec3 a = mesh->vertices[i];
-    Vec3 b = mesh->vertices[i + 1];
-    Vec3 c = mesh->vertices[i + 2];
-    Normal n = mesh->normals[i]; // assume all 3 share normal
-
-    Vec3 a2 = { a.x + n.x * distance, a.y + n.y * distance, a.z + n.z * distance };
-    Vec3 b2 = { b.x + n.x * distance, b.y + n.y * distance, b.z + n.z * distance };
-    Vec3 c2 = { c.x + n.x * distance, c.y + n.y * distance, c.z + n.z * distance };
-
-    add_triangle(mesh, a, b, a2, color);
-    add_triangle(mesh, b, b2, a2, color);
-    add_triangle(mesh, b, c, b2, color);
-    add_triangle(mesh, c, c2, b2, color);
-    add_triangle(mesh, c, a, c2, color);
-    add_triangle(mesh, a, a2, c2, color);
-}
-void set_mesh_color(Mesh* mesh, Color4 color) {
-    for (int i = 0; i < mesh->vertex_count; i++)
-        mesh->colors[i] = color;
-}
-void scale_mesh(Mesh* mesh, float scale) {
-    for (int i = 0; i < mesh->vertex_count; i++) {
-        mesh->vertices[i].x *= scale;
-        mesh->vertices[i].y *= scale;
-        mesh->vertices[i].z *= scale;
-    }
-}
-
-void perturb_vertices(Mesh* mesh, float strength, float frequency) {
-    for (int i = 0; i < mesh->vertex_count; i++) {
-        Vec3 p = { mesh->vertices[i].x, mesh->vertices[i].y, mesh->vertices[i].z };
-        float n = noise3f(p);
-        float displacement = n * strength;
-        void* v = normalize(&p);
-        void* d = multiply3f(v, displacement);
-        Vec3* dp = (Vec3*)d;
-        mesh->vertices[i].x += dp->x;
-        mesh->vertices[i].y += dp->y;
-        mesh->vertices[i].z += dp->z;
-    }
+    int index = mesh->vertex_count++;
+    mesh->vertices[index] = pos;
+    mesh->colors[index] = color;
+    mesh->uvs[index] = uv;
+    mesh->normals[index] = (Vec3){0}; // zero for now
+    return index;
 }
 
 
 void draw_object(const Object* obj, GLenum primitive_type) {
+
     glPushMatrix();
 
     // Apply transformations (Position, Rotation, Scale)
@@ -371,9 +327,27 @@ void draw_object(const Object* obj, GLenum primitive_type) {
     // Scale the object
     glScalef(obj->scale.x, obj->scale.y, obj->scale.z);  // Scale
 
-    draw_mesh(&obj->mesh, primitive_type);
+    GLfloat mat_specular[] = { 1.0, 1.0, 1.0, 1.0 }; // sparkle sparkle
+    GLfloat mat_shininess[] = { 64.0f };
+
+    const Material* m = &obj->mesh.material;
+
+    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT,  m->ambient.data);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  m->diffuse.data);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, m->specular.data);
+    glMaterialf (GL_FRONT_AND_BACK, GL_SHININESS, m->shininess);
+
+
+
+    if (obj->flags & OBJ_FLAG_NORMALS_DIRTY) {
+    glDisable(GL_LIGHTING);
+    }
+    //if (!(obj->flags & OBJ_FLAG_NEEDS_REBUILD)) {
+        draw_mesh(&obj->mesh, primitive_type);
+    //}
 
     glPopMatrix();
+    glEnable(GL_LIGHTING);
 }
 
 void debug_object(const Object* obj) {
