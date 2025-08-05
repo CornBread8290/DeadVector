@@ -1,7 +1,7 @@
 #include "defs.h"
-#include <gl/gl.h>
 #include <time.h>
 static uint32_t seed = 12355;
+#define EPSILON 0.0001f
 
 uint32_t xorshift32() {
     seed += clock();
@@ -21,10 +21,6 @@ uint32_t wangHash(uint32_t seed) {
     seed = seed ^ (seed >> 15);
     return seed;
 }
-float meTanf(float num){
-    return sin(num) / cos(num);
-}
-
 float lerp(float a, float b, float t) {
     return a + t * (b - a);
 }
@@ -81,6 +77,7 @@ float fbm(Vec3 p, int octaves, float persistence, float lacunarity) {
     return total;
 }
 
+
 Vec3 vec3_normalize(Vec3 v) {
     float length = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
     if (length > 0.00001f) {
@@ -108,54 +105,11 @@ Vec3 vec3_add(Vec3 a, Vec3 b) {
 Vec3 vec3_scale(Vec3 v, float s) {
     return (Vec3){ v.x * s, v.y * s, v.z * s };
 }
-Quat quat_mul(Quat a, Quat b) {
-    Quat q;
-    q.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
-    q.x = a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y;
-    q.y = a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x;
-    q.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
-    return q;
+float vec3_dot(Vec3 a, Vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
 }
-Quat quat_axis_angle(float x, float y, float z, float angle_rad) {
-    float s = sinf(angle_rad * 0.5f);
-    Quat q;
-    q.x = x * s;
-    q.y = y * s;
-    q.z = z * s;
-    q.w = cosf(angle_rad * 0.5f);
-    return q;
-}
-Quat quat_normalize(Quat q) {
-    float mag = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
-    q.x /= mag;
-    q.y /= mag;
-    q.z /= mag;
-    q.w /= mag;
-    return q;
-}
-void quat_to_matrix(const Quat* q, float* m) {
-    float x2 = q->x + q->x, y2 = q->y + q->y, z2 = q->z + q->z;
-    float xx = q->x * x2, yy = q->y * y2, zz = q->z * z2;
-    float xy = q->x * y2, xz = q->x * z2, yz = q->y * z2;
-    float wx = q->w * x2, wy = q->w * y2, wz = q->w * z2;
-
-    m[0] = 1.0f - (yy + zz);
-    m[1] = xy + wz;
-    m[2] = xz - wy;
-    m[3] = 0.0f;
-
-    m[4] = xy - wz;
-    m[5] = 1.0f - (xx + zz);
-    m[6] = yz + wx;
-    m[7] = 0.0f;
-
-    m[8]  = xz + wy;
-    m[9]  = yz - wx;
-    m[10] = 1.0f - (xx + yy);
-    m[11] = 0.0f;
-
-    m[12] = m[13] = m[14] = 0.0f;
-    m[15] = 1.0f;
+Vec3 vec3_invert(Vec3 v) {
+    return (Vec3){ -v.x, -v.y, -v.z };
 }
 Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
     // q * v * conj(q)
@@ -189,225 +143,282 @@ Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
 
     return out;
 }
+Quat quat_mul(Quat a, Quat b) {
+    Quat q;
+    q.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
+    q.x = a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y;
+    q.y = a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x;
+    q.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
+    return q;
+}
+Quat quat_axis_angle(float x, float y, float z, float angle_rad) {
+    float s = sinf(angle_rad * 0.5f);
+    Quat q;
+    q.x = x * s;
+    q.y = y * s;
+    q.z = z * s;
+    q.w = cosf(angle_rad * 0.5f);
+    return q;
+}
+Quat quat_normalize(Quat q) {
+    float mag = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
+    q.x /= mag;
+    q.y /= mag;
+    q.z /= mag;
+    q.w /= mag;
+    return q;
+}
 Quat quat_conjugate(Quat q) {
     return (Quat){ -q.x, -q.y, -q.z, q.w };
 }
-void SetProjectionMatrix(float zNear, float zFar) {
-    float fovY = 90.0f;
-    float f = 1.0f / meTanf((fovY * pi / 180.0f) / 2.0f); // Convert degrees to radians
-    float mat[16] = {0};
-
-    mat[0] = f / aspectRatio;
-    mat[5] = f;
-    mat[10] = (zFar + zNear) / (zNear - zFar);
-    mat[11] = -1.0f;
-    mat[14] = (2.0f * zFar * zNear) / (zNear - zFar);
-    mat[15] = 0.0f;
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(mat);
-    glMatrixMode(GL_MODELVIEW);
+Quat quat_from_euler(float pitch, float yaw) {
+    Quat qx = quat_axis_angle(1, 0, 0, pitch);
+    Quat qy = quat_axis_angle(0, 1, 0, yaw);
+    return quat_mul(qy, qx); // yaw first, then pitch
 }
-Vec3 direction_between(Vec3 a, Vec3 b) {
-    Vec3 direction;
-    direction.x = b.x - a.x;
-    direction.y = b.y - a.y;
-    direction.z = b.z - a.z;
-    return direction;
+
+
+static inline int float_equals(float a, float b) {
+    return fabsf(a - b) < EPSILON;
 }
-void* normalize(void* v) {
-    if (v == NULL) return v;
-    Vec3* vec = (Vec3*)v; 
-    float length = sqrtf(vec->x * vec->x + vec->y * vec->y + vec->z * vec->z);
-    if (length > 0) {
-        vec->x /= length;
-        vec->y /= length;
-        vec->z /= length;
+
+int vec3_equals(Vec3 a, Vec3 b) {
+    return float_equals(a.x, b.x) &&
+           float_equals(a.y, b.y) &&
+           float_equals(a.z, b.z);
+}
+
+int vec4_equals(Vec4 a, Vec4 b) {
+    return float_equals(a.x, b.x) &&
+           float_equals(a.y, b.y) &&
+           float_equals(a.z, b.z) &&
+           float_equals(a.w, b.w);
+}
+
+int uv_equals(UV a, UV b) {
+    return float_equals(a.u, b.u) &&
+           float_equals(a.v, b.v);
+}
+
+int color4_equals(Color4 a, Color4 b) {
+    return float_equals(a.r, b.r) &&
+           float_equals(a.g, b.g) &&
+           float_equals(a.b, b.b) &&
+           float_equals(a.a, b.a);
+}
+
+int vertex_equals(VertexFormat* a, VertexFormat* b) {
+    return vec3_equals(a->position, b->position) &&
+           vec3_equals(a->normal, b->normal) &&
+           vec4_equals(a->tangent, b->tangent) &&
+           color4_equals(a->color, b->color) &&
+           uv_equals(a->uv, b->uv) &&
+           float_equals(a->roughness, b->roughness) &&
+           float_equals(a->metallic, b->metallic) &&
+           float_equals(a->emissive, b->emissive);
+}
+void mat4_perspective(float* out, float fovY_deg, float aspect, float zNear, float zFar) {
+    float f = 1.0f / tanf((fovY_deg * 3.14159265f / 180.0f) / 2.0f);
+
+    out[0] = f / aspect;
+    out[1] = 0.0f;
+    out[2] = 0.0f;
+    out[3] = 0.0f;
+
+    out[4] = 0.0f;
+    out[5] = f;
+    out[6] = 0.0f;
+    out[7] = 0.0f;
+
+    out[8] = 0.0f;
+    out[9] = 0.0f;
+    out[10] = (zFar + zNear) / (zNear - zFar);
+    out[11] = -1.0f;
+
+    out[12] = 0.0f;
+    out[13] = 0.0f;
+    out[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+    out[15] = 0.0f;
+}
+void mat4_identity(Mat4 m) {
+    memset(m, 0, sizeof(Mat4));
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+void mat4_translate(Mat4 m, float x, float y, float z) {
+    m[12] += x;
+    m[13] += y;
+    m[14] += z;
+}
+void mat4_scale(Mat4 m, float sx, float sy, float sz) {
+    m[0] *= sx; m[4] *= sx; m[8]  *= sx; m[12] *= sx;
+    m[1] *= sy; m[5] *= sy; m[9]  *= sy; m[13] *= sy;
+    m[2] *= sz; m[6] *= sz; m[10] *= sz; m[14] *= sz;
+}
+void mat4_multiply(Mat4 out, const Mat4 a, const Mat4 b) {
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            out[col * 4 + row] =
+                a[0 * 4 + row] * b[col * 4 + 0] +
+                a[1 * 4 + row] * b[col * 4 + 1] +
+                a[2 * 4 + row] * b[col * 4 + 2] +
+                a[3 * 4 + row] * b[col * 4 + 3];
+        }
     }
-    return v;
 }
-void* multiply3f(void* v, float scalar) {
-    if (v == NULL || scalar == 0.0f) return v;
-    
-    Vec3* vec = (Vec3*)v;
-    vec->x *= scalar;
-    vec->y *= scalar;
-    vec->z *= scalar;
+void mat4_ortho(Mat4 out, float left, float right, float bottom, float top, float nearf, float farf) {
+    memset(out, 0, sizeof(Mat4));
+    out[0] = 2.0f / (right - left);
+    out[5] = 2.0f / (top - bottom);
+    out[10] = -2.0f / (farf - nearf);
+    out[12] = -(right + left) / (right - left);
+    out[13] = -(top + bottom) / (top - bottom);
+    out[14] = -(farf + nearf) / (farf - nearf);
+    out[15] = 1.0f;
+}
+void mat4_lookat(Mat4 m, Vec3 eye, Vec3 center, Vec3 up) {
+    Vec3 f = vec3_normalize(vec3_sub(center, eye));
+    Vec3 s = vec3_normalize(vec3_cross(f, up));
+    Vec3 u = vec3_cross(s, f);
 
-    return v;
+    mat4_identity(m);
+    m[0] = s.x; m[4] = s.y; m[8]  = s.z; m[12] = -vec3_dot(s, eye);
+    m[1] = u.x; m[5] = u.y; m[9]  = u.z; m[13] = -vec3_dot(u, eye);
+    m[2] = -f.x; m[6] = -f.y; m[10] = -f.z; m[14] = vec3_dot(f, eye);
 }
 
-void init_mesh(Mesh* mesh, int initial_capacity) {
+void quat_to_matrix(const Quat* q, Mat4 m) {
+    float x = q->x, y = q->y, z = q->z, w = q->w;
+
+    float x2 = x + x, y2 = y + y, z2 = z + z;
+    float xx = x * x2, yy = y * y2, zz = z * z2;
+    float xy = x * y2, xz = x * z2, yz = y * z2;
+    float wx = w * x2, wy = w * y2, wz = w * z2;
+
+    m[0] = 1.0f - (yy + zz);  m[1] = xy + wz;        m[2] = xz - wy;        m[3] = 0.0f;
+    m[4] = xy - wz;           m[5] = 1.0f - (xx + zz); m[6] = yz + wx;        m[7] = 0.0f;
+    m[8] = xz + wy;           m[9] = yz - wx;        m[10] = 1.0f - (xx + yy); m[11] = 0.0f;
+    m[12] = 0.0f;             m[13] = 0.0f;          m[14] = 0.0f;          m[15] = 1.0f;
+}
+
+
+void init_mesh(Mesh* mesh, int vertex_capacity, int index_capacity) {
     mesh->vertex_count = 0;
-    mesh->vertex_capacity = initial_capacity;
-
     mesh->index_count = 0;
-    mesh->index_capacity = initial_capacity * 3; // rough estimate
 
-    mesh->vertices = malloc(sizeof(Vec3) * mesh->vertex_capacity);
-    mesh->normals = malloc(sizeof(Vec3) * mesh->vertex_capacity);
-    mesh->colors = malloc(sizeof(Color4) * mesh->vertex_capacity);
-    mesh->uvs = malloc(sizeof(UV) * mesh->vertex_capacity);
-    mesh->indices = malloc(sizeof(unsigned int) * mesh->index_capacity);
-    mesh->flags = (1 << 0) | (1 << 1) | (1 << 2); // normals, colors, uvs
+    mesh->vertex_capacity = vertex_capacity;
+    mesh->index_capacity = index_capacity;
 
-    mesh->material.ambient  = (Color4){ 0.2f, 0.2f, 0.2f, 1.0f };
-    mesh->material.diffuse  = (Color4){ 0.6f, 0.6f, 0.6f, 1.0f };
-    mesh->material.specular = (Color4){ 1.0f, 1.0f, 1.0f, 1.0f };
-    mesh->material.shininess = 32.0f;
+    mesh->vertices = malloc(sizeof(VertexFormat) * vertex_capacity);
+    mesh->indices = malloc(sizeof(unsigned int) * index_capacity);
 
+    mesh->vao = 0;
+    mesh->vbo = 0;
+    mesh->ibo = 0;
+
+    glGenVertexArrays(1, &mesh->vao);
+    glGenBuffers(1, &mesh->vbo);
+    glGenBuffers(1, &mesh->ibo);
 }
-void draw_mesh(const Mesh* mesh, GLenum primitive_type) {
-    
-    if (!mesh || mesh->index_count <= 0 || !mesh->vertices || !mesh->indices) return;
-
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glVertexPointer(3, GL_FLOAT, 0, mesh->vertices);
-
-    if (mesh->flags & (1 << 0)) {
-        glEnableClientState(GL_NORMAL_ARRAY);
-        glNormalPointer(GL_FLOAT, 0, mesh->normals);
-    }
-
-    if (mesh->flags & (1 << 1)) {
-        glEnableClientState(GL_COLOR_ARRAY);
-        glColorPointer(4, GL_FLOAT, 0, mesh->colors);
-    }
-
-    if (mesh->flags & (1 << 2)) {
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(2, GL_FLOAT, 0, mesh->uvs);
-    }
-
-    glDrawElements(primitive_type, mesh->index_count, GL_UNSIGNED_INT, mesh->indices);
-
-    glDisableClientState(GL_VERTEX_ARRAY);
-    if (mesh->flags & (1 << 0)) glDisableClientState(GL_NORMAL_ARRAY);
-    if (mesh->flags & (1 << 1)) glDisableClientState(GL_COLOR_ARRAY);
-    if (mesh->flags & (1 << 2)) glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-}
-int find_or_add_vertex(Mesh* mesh, Vec3 pos, Color4 color, UV uv) {
+int find_or_add_vertex(Mesh* mesh, VertexFormat v) {
     for (int i = 0; i < mesh->vertex_count; i++) {
-        if (memcmp(&mesh->vertices[i], &pos, sizeof(Vec3)) == 0 &&
-            memcmp(&mesh->colors[i], &color, sizeof(Color4)) == 0 &&
-            memcmp(&mesh->uvs[i], &uv, sizeof(UV)) == 0) {
+        if (vertex_equals(&mesh->vertices[i], &v)) {
             return i;
         }
     }
 
     if (mesh->vertex_count >= mesh->vertex_capacity) {
         mesh->vertex_capacity *= 2;
-        mesh->vertices = realloc(mesh->vertices, sizeof(Vec3) * mesh->vertex_capacity);
-        mesh->normals = realloc(mesh->normals, sizeof(Vec3) * mesh->vertex_capacity);
-        mesh->colors = realloc(mesh->colors, sizeof(Color4) * mesh->vertex_capacity);
-        mesh->uvs = realloc(mesh->uvs, sizeof(UV) * mesh->vertex_capacity);
+        mesh->vertices = realloc(mesh->vertices, sizeof(VertexFormat) * mesh->vertex_capacity);
     }
 
     int index = mesh->vertex_count++;
-    mesh->vertices[index] = pos;
-    mesh->colors[index] = color;
-    mesh->uvs[index] = uv;
-    mesh->normals[index] = (Vec3){0}; // zero for now
+    mesh->vertices[index] = v;
     return index;
 }
 
+void draw_mesh(Mesh* mesh, GLenum primitive_type) {
+    if (!mesh || !mesh->vao || mesh->index_count == 0) return;
 
-void draw_object(const Object* obj, GLenum primitive_type) {
+    glBindVertexArray(mesh->vao);
+    glDrawElements(primitive_type, mesh->index_count, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+}
+void upload_mesh(Mesh* mesh) {
+    if (!mesh->vao) glGenVertexArrays(1, &mesh->vao);
+    if (!mesh->vbo) glGenBuffers(1, &mesh->vbo);
+    if (!mesh->ibo) glGenBuffers(1, &mesh->ibo);
 
-    glPushMatrix();
+    glBindVertexArray(mesh->vao);
 
-    // Apply transformations (Position, Rotation, Scale)
-    glTranslatef(obj->position.x, obj->position.y, obj->position.z);  // Translation (position)
-    
-    Quat normalized = quat_normalize(obj->rotation);
-    float mat[16];
-    quat_to_matrix(&normalized, mat);
-    glMultMatrixf(mat);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
+    glBufferData(GL_ARRAY_BUFFER, mesh->vertex_count * sizeof(VertexFormat), mesh->vertices, GL_STATIC_DRAW);
 
-    // Scale the object
-    glScalef(obj->scale.x, obj->scale.y, obj->scale.z);  // Scale
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->ibo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh->index_count * sizeof(unsigned int), mesh->indices, GL_STATIC_DRAW);
 
-    GLfloat mat_specular[] = { 1.0, 1.0, 1.0, 1.0 }; // sparkle sparkle
-    GLfloat mat_shininess[] = { 64.0f };
+    size_t stride = sizeof(VertexFormat);
+    size_t offset = 0;
 
-    const Material* m = &obj->mesh.material;
+    glEnableVertexAttribArray(0); // position
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(Vec3);
 
-    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT,  m->ambient.data);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE,  m->diffuse.data);
-    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, m->specular.data);
-    glMaterialf (GL_FRONT_AND_BACK, GL_SHININESS, m->shininess);
+    glEnableVertexAttribArray(1); // normal
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(Vec3);
 
+    glEnableVertexAttribArray(2); // tangent
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(Vec4);
 
+    glEnableVertexAttribArray(3); // color
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(Color4);
 
-    if (obj->flags & OBJ_FLAG_NORMALS_DIRTY) {
-    glDisable(GL_LIGHTING);
-    }
-    //if (!(obj->flags & OBJ_FLAG_NEEDS_REBUILD)) {
-        draw_mesh(&obj->mesh, primitive_type);
-    //}
+    glEnableVertexAttribArray(4); // uv
+    glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(UV);
 
-    glPopMatrix();
-    glEnable(GL_LIGHTING);
+    glEnableVertexAttribArray(5); // roughness
+    glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(float);
+
+    glEnableVertexAttribArray(6); // metallic
+    glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(float);
+
+    glEnableVertexAttribArray(7); // emissive
+    glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, stride, (void*)offset);
+    offset += sizeof(float);
+
+    glBindVertexArray(0); // 🔐 Good practice
 }
 
-void debug_object(const Object* obj) {
-    if (!obj || obj->mesh.vertex_count <= 0 || !obj->mesh.vertices) return;
 
-    glDisable(GL_LIGHTING);
-    glColor3f(1.0f, 0.0f, 1.0f);
+void draw_object(const Object* obj, ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type) {
+    if (!obj || !shader || !mesh_pool || !(obj->flags & OBJ_FLAG_VISIBLE)) return;
 
-    glPushMatrix();
+    Mesh* mesh = mesh_pool[obj->mesh_id];
+    if (!mesh) return;
 
-    // Apply translation (position)
-    glTranslatef(obj->position.x, obj->position.y, obj->position.z);  
+    const Material* m = material_pool[mesh->material_id];
+    if (!m) return;
 
-    // Apply rotation (using quaternion to matrix)
-    Quat normalized = quat_normalize(obj->rotation);
-    float mat[16];
-    quat_to_matrix(&normalized, mat);
-    glMultMatrixf(mat);
+    Mat4 T, R, S, TR, model;
+    mat4_identity(T);
+    mat4_translate(T, obj->position.x, obj->position.y, obj->position.z);
+    quat_to_matrix(&obj->rotation, R);
+    mat4_identity(S);
+    mat4_scale(S, obj->scale.x, obj->scale.y, obj->scale.z);
+    mat4_multiply(TR, T, R);
+    mat4_multiply(model, TR, S);
 
-    // Apply scaling
-    glScalef(obj->scale.x, obj->scale.y, obj->scale.z);  
+    glUniformMatrix4fv(shader->u_model_loc, 1, GL_FALSE, model);
+    glUniform4fv(shader->u_material_albedo_loc, 1, &m->albedo.r);
+    glUniform1f(shader->u_material_roughness_loc, m->roughness);
+    glUniform1f(shader->u_material_metallic_loc,  m->metallic);
+    glUniform1f(shader->u_material_emissive_loc,  m->emissive);
 
-    // Iterate over all triangles in the mesh
-    for (int i = 0; i < obj->mesh.vertex_count; i += 3) {
-        Vec3 a = obj->mesh.vertices[i];
-        Vec3 b = obj->mesh.vertices[i + 1];
-        Vec3 c = obj->mesh.vertices[i + 2];
-
-        Vec3 u = { b.x - a.x, b.y - a.y, b.z - a.z };
-        Vec3 v = { c.x - a.x, c.y - a.y, c.z - a.z };
-        Vec3 n = {
-            u.y * v.z - u.z * v.y,
-            u.z * v.x - u.x * v.z,
-            u.x * v.y - u.y * v.x
-        };
-
-        // Normalize the normal
-        float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
-        if (len > 0.0f) {
-            n.x /= len; n.y /= len; n.z /= len;
-        }
-
-        // Render the normal lines
-        glBegin(GL_LINES);
-            glVertex3f(a.x, a.y, a.z);
-            glVertex3f(a.x + n.x * 0.1f, a.y + n.y * 0.1f, a.z + n.z * 0.1f);  // Scale normal for visibility
-        glEnd();
-        glBegin(GL_LINES);
-            glVertex3f(b.x, b.y, b.z);
-            glVertex3f(b.x + n.x * 0.1f, b.y + n.y * 0.1f, b.z + n.z * 0.1f);
-        glEnd();
-        glBegin(GL_LINES);
-            glVertex3f(c.x, c.y, c.z);
-            glVertex3f(c.x + n.x * 0.1f, c.y + n.y * 0.1f, c.z + n.z * 0.1f);
-        glEnd();
-    }
-
-    glPopMatrix();
-
-    // Re-enable lighting and reset color
-    glEnable(GL_LIGHTING);
-    glColor3f(1.0f, 1.0f, 1.0f);
+    draw_mesh(mesh, primitive_type);
 }
+
