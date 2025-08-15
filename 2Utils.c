@@ -4,7 +4,6 @@ static uint32_t seed = 12355;
 #define EPSILON 0.0001f
 
 uint32_t xorshift32() {
-    seed += clock();
     seed ^= seed << 13;
     seed ^= seed >> 17;
     seed ^= seed << 5;
@@ -396,29 +395,25 @@ void upload_mesh(Mesh* mesh) {
 
 
 void draw_object(const Object* obj, ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type) {
-    if (!obj || !shader || !mesh_pool || !(obj->flags & OBJ_FLAG_VISIBLE)) return;
+    const Mesh* mesh = mesh_pool[obj->mesh_id];
+    if (!mesh || !(obj->flags & OBJ_FLAG_VISIBLE)) return;
 
-    Mesh* mesh = mesh_pool[obj->mesh_id];
-    if (!mesh) return;
+    // Compute model matrix from transform
+    Mat4 model, trans, rot, scale;
+    mat4_identity(model);
+    mat4_identity(trans);
+    mat4_translate(trans, obj->position.x, obj->position.y, obj->position.z);
+    quat_to_matrix(&obj->rotation, rot);
+    mat4_identity(scale);
+    mat4_scale(scale, obj->scale.x, obj->scale.y, obj->scale.z);
 
-    const Material* m = material_pool[mesh->material_id];
-    if (!m) return;
-
-    Mat4 T, R, S, TR, model;
-    mat4_identity(T);
-    mat4_translate(T, obj->position.x, obj->position.y, obj->position.z);
-    quat_to_matrix(&obj->rotation, R);
-    mat4_identity(S);
-    mat4_scale(S, obj->scale.x, obj->scale.y, obj->scale.z);
-    mat4_multiply(TR, T, R);
-    mat4_multiply(model, TR, S);
+    // M = T * R * S
+    Mat4 trs;
+    mat4_multiply(trs, rot, scale);
+    mat4_multiply(model, trans, trs);
 
     glUniformMatrix4fv(shader->u_model_loc, 1, GL_FALSE, model);
-    glUniform4fv(shader->u_material_albedo_loc, 1, &m->albedo.r);
-    glUniform1f(shader->u_material_roughness_loc, m->roughness);
-    glUniform1f(shader->u_material_metallic_loc,  m->metallic);
-    glUniform1f(shader->u_material_emissive_loc,  m->emissive);
 
-    draw_mesh(mesh, primitive_type);
+    draw_mesh((Mesh*)mesh, primitive_type);
 }
 

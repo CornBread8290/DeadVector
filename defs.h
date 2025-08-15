@@ -3,8 +3,8 @@
 
 #include <math.h>
 #include <windows.h>
-#include "gl.h"
-
+#include <glad/gl.h>
+#include <glad/wgl.h>
 
 extern float aspectRatio;
 

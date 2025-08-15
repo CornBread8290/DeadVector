@@ -1,7 +1,8 @@
 #include "defs.h"
 #include <stdbool.h>
-#include "wgl.h"
 #include <stdio.h>
+#include <glad/gl.h>
+#include <glad/wgl.h>
 
 HGLRC hRC;
 HDC hDC;   // Device Context
@@ -95,7 +96,9 @@ ShaderProgram create_shader_program_from_files(const char* vert_path, const char
 // OpenGL state
 GLuint shadow_fbo, shadow_texture;
 ShaderProgram shadow_shader, main_shader;
+GLuint skybox_vao, skybox_vbo, skybox_ibo;
 Mat4 light_space_matrix;
+
 
 void setup_shadow_mapping() {
     glGenFramebuffers(1, &shadow_fbo);
@@ -289,6 +292,90 @@ void recalculate_flat_normals(Mesh* mesh) {
     }
 }
 
+void generate_gas_giant(Mesh* mesh, Vec3 center, float radius, int subdivisions) {
+    mesh->material_id = 1; 
+    if (subdivisions < 1) subdivisions = 1;
+
+    int verts_per_face = (subdivisions + 1) * (subdivisions + 1);
+    int faces = 6;
+    int estimated_vertices = verts_per_face * faces;
+    int estimated_triangles = 6 * subdivisions * subdivisions * 2;
+    int estimated_indices = estimated_triangles * 3;
+
+    init_mesh(mesh, estimated_vertices, estimated_indices);
+
+    float step = 2.0f / subdivisions;
+    Vec3 face_normals[6] = {
+        { 1, 0, 0 }, { -1, 0, 0 },
+        { 0, 1, 0 }, { 0, -1, 0 },
+        { 0, 0, 1 }, { 0, 0, -1 }
+    };
+
+    for (int f = 0; f < 6; f++) {
+        Vec3 normal = face_normals[f];
+        Vec3 axis_a = {0}, axis_b = {0};
+
+        if (fabsf(normal.x) > 0.5f) { axis_a.z = 1; axis_b.y = 1; }
+        else if (fabsf(normal.y) > 0.5f) { axis_a.x = 1; axis_b.z = 1; }
+        else { axis_a.x = 1; axis_b.y = 1; }
+
+        int vert_idx_grid[subdivisions + 1][subdivisions + 1];
+
+        for (int i = 0; i <= subdivisions; i++) {
+            for (int j = 0; j <= subdivisions; j++) {
+                float x = -1.0f + step * i;
+                float y = -1.0f + step * j;
+
+                Vec3 p = {
+                    normal.x + axis_a.x * x + axis_b.x * y,
+                    normal.y + axis_a.y * x + axis_b.y * y,
+                    normal.z + axis_a.z * x + axis_b.z * y
+                };
+
+                Vec3 dir = vec3_normalize(p);
+                Vec3 final_pos = {
+                    center.x + dir.x * radius,
+                    center.y + dir.y * radius,
+                    center.z + dir.z * radius
+                };
+
+                VertexFormat vert = {
+                    .position = final_pos,
+                    .normal = dir,
+                    .color = {1, 1, 1, 1},
+                    .uv = {0},
+                    .roughness = 0.8f,
+                    .metallic = 0.0f,
+                    .emissive = 0.0f
+                };
+
+                vert_idx_grid[i][j] = find_or_add_vertex(mesh, vert);
+            }
+        }
+
+        for (int i = 0; i < subdivisions; i++) {
+            for (int j = 0; j < subdivisions; j++) {
+                int a = vert_idx_grid[i][j];
+                int b = vert_idx_grid[i+1][j];
+                int c = vert_idx_grid[i][j+1];
+                int d = vert_idx_grid[i+1][j+1];
+
+                mesh->indices[mesh->index_count++] = a;
+                mesh->indices[mesh->index_count++] = b;
+                mesh->indices[mesh->index_count++] = c;
+
+                mesh->indices[mesh->index_count++] = c;
+                mesh->indices[mesh->index_count++] = b;
+                mesh->indices[mesh->index_count++] = d;
+            }
+        }
+    }
+}
+void set_common_matrices(ShaderProgram* shader, const float* view, const float* projection) {
+    glUseProgram(shader->id);
+    glUniformMatrix4fv(shader->u_view_loc, 1, GL_FALSE, view);
+    glUniformMatrix4fv(shader->u_projection_loc, 1, GL_FALSE, projection);
+}
 
 
 static GLADapiproc APIENTRY glad_wgl_loader(const char* name) {
@@ -312,7 +399,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     WNDCLASS wc = { 0 };
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = "GLAD_DEMO";
+    wc.lpszClassName = " ";
     RegisterClass(&wc);
     hWnd = CreateWindow(wc.lpszClassName, "Dead Vector 2", WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
@@ -334,6 +421,36 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         MessageBox(0, "Failed to load WGL", "Error", MB_OK);
         return 1;
     }
+
+    int pixelAttribs[] = {
+    WGL_DRAW_TO_WINDOW_ARB, GL_TRUE,
+    WGL_SUPPORT_OPENGL_ARB, GL_TRUE,
+    WGL_DOUBLE_BUFFER_ARB, GL_TRUE,
+    WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
+    WGL_COLOR_BITS_ARB, 32,
+    WGL_DEPTH_BITS_ARB, 24,
+    WGL_STENCIL_BITS_ARB, 8,
+    WGL_SAMPLE_BUFFERS_ARB, 1,
+    WGL_SAMPLES_ARB, 4,
+    0
+    };
+
+    int format;
+    UINT numFormats;
+    BOOL status = wglChoosePixelFormatARB(hDC, pixelAttribs, NULL, 1, &format, &numFormats);
+    if (!status || numFormats == 0) {
+        MessageBox(0, "Failed to choose multisample pixel format", "Error", MB_OK);
+        return 1;
+    }
+
+    PIXELFORMATDESCRIPTOR realPFD;
+    DescribePixelFormat(hDC, format, sizeof(realPFD), &realPFD);
+    SetPixelFormat(hDC, format, &realPFD);
+
+
+
+
+
     int attribs[] = {
         0x2091, 3,
         0x2092, 3,
@@ -368,11 +485,20 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     }
 
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_MULTISAMPLE);
+    //glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK); // Cull back-facing triangles
+        glFrontFace(GL_CCW); // Counter-clockwise is front (default)
+
 
 
     // 5. Build shaders
-    ShaderProgram test_shader = create_shader_program_from_files("shaders/vert.vert", "shaders/frag.frag");
+    ShaderProgram test_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/asteroid.frag");
     glUseProgram(test_shader.id);
+    ShaderProgram skybox_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/skybox.frag");
+    skybox_shader.u_view_loc = glGetUniformLocation(skybox_shader.id, "u_view");
+    skybox_shader.u_projection_loc = glGetUniformLocation(skybox_shader.id, "u_projection");
+
     
     glGenFramebuffers(1, &shadow_fbo);
     glGenTextures(1, &shadow_texture);
@@ -404,7 +530,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     float pv[16];
     float mvp[16];
 
-    mat4_perspective(projection, 90.0f, aspectRatio, 0.1f, 100.0f);
+    mat4_perspective(projection, 90.0f, aspectRatio, 0.1f, 10000.0f);
 
     Quat rot_conj = quat_conjugate(rot);
     quat_to_matrix(&rot_conj, cview_rot);      // turns into matrix
@@ -419,9 +545,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     mat4_multiply(pv, projection, cview);
     mat4_multiply(mvp, pv, model);
-
-    GLint u_mvp = glGetUniformLocation(test_shader.id, "u_mvp");
-    glUniformMatrix4fv(u_mvp, 1, GL_FALSE, mvp);
 
 
     glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
@@ -506,22 +629,41 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         .submesh_count = 1,
         .flags = 0
     };
+    upload_mesh(&cube_mesh);
+    mesh_pool[0] = &cube_mesh;
+
     Mesh asteroid_mesh;
-    generate_asteroid_cubesphere(&asteroid_mesh, (Vec3){0, 0, 0}, 5.0f, 256);
+    generate_asteroid_cubesphere(&asteroid_mesh, (Vec3){0, 0, 0}, 5.0f, 100);
     recalculate_flat_normals(&asteroid_mesh);
+    upload_mesh(&asteroid_mesh);
+    mesh_pool[1] = &asteroid_mesh;
     Object asteroid = {
-        .position = {0.0f, 0.0f, 0.0f},
+        .position = {0.0f, 0.0f, -40.0f},
         .rotation = {0.0f, 0.0f, 0.0f, 1.0f},
         .scale = {1.0f, 1.0f, 1.0f},
         .mesh_id = 1,
         .flags = OBJ_FLAG_VISIBLE,
     };
 
-    mesh_pool[0] = &cube_mesh;
-    mesh_pool[1] = &asteroid_mesh;
+    Mesh gas_mesh;
+    generate_gas_giant(&gas_mesh, (Vec3){0, 0, 0}, 20000.0f, 100);
+    //generate_asteroid_cubesphere(&gas_mesh, (Vec3){0, 0, 0}, 20.0f, 100);
+    upload_mesh(&gas_mesh);
+    mesh_pool[2] = &gas_mesh;
 
-    upload_mesh(&cube_mesh);
-    upload_mesh(&asteroid_mesh);
+    Object gas_planet = {
+        .position = {0, 0, 100000},
+        .rotation = {0, 0, 0, 1},
+        .scale = {1, 1, 1},
+        .mesh_id = 2,   
+        .flags = OBJ_FLAG_VISIBLE
+    };
+
+    ShaderProgram planet_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/planet.frag"); 
+    set_common_matrices(&test_shader, cview, projection);
+    set_common_matrices(&skybox_shader, cview, projection);
+    set_common_matrices(&planet_shader, cview, projection);
+
     const static Material test_material = {
         .albedo = {1, 0, 0, 1},
         .roughness = 0.5f,
@@ -536,6 +678,41 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         .emissive = 0.0f
     };
     material_pool[1] = &asteroid_material;
+
+    //Skybox generation
+    float skyboxVertices[] = {
+    -1, -1, -1,  1, -1, -1,  1,  1, -1, -1,  1, -1,
+    -1, -1,  1,  1, -1,  1,  1,  1,  1, -1,  1,  1,
+    };
+    unsigned int skyboxIndices[] = {
+        0, 1, 2, 2, 3, 0,  // -Z
+        4, 5, 6, 6, 7, 4,  // +Z
+        0, 4, 7, 7, 3, 0,  // -X
+        1, 5, 6, 6, 2, 1,  // +X
+        3, 2, 6, 6, 7, 3,  // +Y
+        0, 1, 5, 5, 4, 0   // -Y
+    };
+    // Generate skybox buffers
+    glGenVertexArrays(1, &skybox_vao);
+    glGenBuffers(1, &skybox_vbo);
+    glGenBuffers(1, &skybox_ibo);
+
+    // Bind and fill
+    glBindVertexArray(skybox_vao);
+
+    glBindBuffer(GL_ARRAY_BUFFER, skybox_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, skybox_ibo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(skyboxIndices), skyboxIndices, GL_STATIC_DRAW);
+
+    // Position attribute only
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    glBindVertexArray(0);
+
+
 
     // 8. Main loop
     MSG msg;
@@ -575,8 +752,14 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             vel = (Vec3){0, 0, 0};
 
             glDeleteProgram(test_shader.id); // clean up the old
-            test_shader = create_shader_program_from_files("shaders/vert.vert", "shaders/frag.frag");
+            test_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/asteroid.frag");
             glUseProgram(test_shader.id);
+
+            glDeleteProgram(skybox_shader.id);
+            skybox_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/skybox.frag");
+            glUseProgram(skybox_shader.id);
+            glEnable(GL_LINE_SMOOTH);
+            
         }
         Vec3 dir = {0};
         if (GetAsyncKeyState(VK_UP) & 0x8000)      dir.z -= 1.0f;
@@ -599,16 +782,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         mat4_multiply(cview, cview_rot, cview_trans);
 
-        mat4_perspective(projection, 90.0f, aspectRatio, 0.1f, 100.0f);
+        mat4_perspective(projection, 90.0f, aspectRatio, 0.1f, 10000.0f);
         mat4_identity(model);
         mat4_multiply(pv, projection, cview);
         mat4_multiply(mvp, pv, model);
 
-        glUniform4f(test_shader.u_material_albedo_loc,
-            test_material.albedo.r,
-            test_material.albedo.g,
-            test_material.albedo.b,
-            test_material.albedo.a);
 
         Mat4 light_proj, light_view, light_space_matrix;
         mat4_ortho(light_proj, -10, 10, -10, 10, 0.1f, 50.0f);
@@ -621,7 +799,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glViewport(0, 0, 1024, 1024);
         glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo);
         glClear(GL_DEPTH_BUFFER_BIT);
+
+
         glUseProgram(shadow_shader.id);
+
         glUniformMatrix4fv(shadow_shader.u_light_space_matrix_loc, 1, GL_FALSE, light_space_matrix);
         //draw_object(&cube, &shadow_shader, mesh_pool, GL_TRIANGLES);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -629,7 +810,27 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glViewport(0, 0, 800, 600);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        glDepthMask(GL_FALSE);
+        glDepthFunc(GL_LEQUAL); 
+        glUseProgram(skybox_shader.id);
+        glUniform1i(glGetUniformLocation(skybox_shader.id,"u_is_skybox"), 1);
+
+        // Remove translation from view
+        Mat4 view_no_translate;
+        memcpy(view_no_translate, cview, sizeof(Mat4));
+        view_no_translate[12] = view_no_translate[13] = view_no_translate[14] = 0.0f;
+
+        glUniformMatrix4fv(skybox_shader.u_view_loc, 1, GL_FALSE, view_no_translate);
+        glUniformMatrix4fv(skybox_shader.u_projection_loc, 1, GL_FALSE, projection);
+
+        glBindVertexArray(skybox_vao);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+        glDepthFunc(GL_LESS); // Restore for normal geometry
+        glDepthMask(GL_TRUE);
+
         glUseProgram(test_shader.id);
+        glUniform1i(glGetUniformLocation(test_shader.id,"u_is_skybox"), 0);
 
         // Set light direction
         Vec3 light_dir = vec3_normalize((Vec3){2.0f, -4.0f, 1.0f});
@@ -639,11 +840,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glUniform3f(u_view_pos, pos.x, pos.y, pos.z); // camera position
 
 
-        Color4 albedo = material_pool[0]->albedo;
-        glUniform4f(test_shader.u_material_albedo_loc, albedo.r, albedo.g, albedo.b, albedo.a);
 
         // Set matrices
-        glUniformMatrix4fv(test_shader.u_model_loc, 1, GL_FALSE, model);
         glUniformMatrix4fv(test_shader.u_view_loc, 1, GL_FALSE, cview);
         glUniformMatrix4fv(test_shader.u_projection_loc, 1, GL_FALSE, projection);
         glUniformMatrix4fv(test_shader.u_light_space_matrix_loc, 1, GL_FALSE, light_space_matrix);
@@ -653,19 +851,33 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         glBindTexture(GL_TEXTURE_2D, shadow_texture);
         glUniform1i(glGetUniformLocation(test_shader.id, "u_shadow_map"), 1);
 
-        // Finally draw
         //draw_object(&cube, &test_shader, mesh_pool, GL_TRIANGLES);
         draw_object(&asteroid, &test_shader, mesh_pool, GL_TRIANGLES);
+
+
+        glUseProgram(planet_shader.id);
+        glUniform1i(glGetUniformLocation(planet_shader.id,"u_is_skybox"), 0);
+
+        glUniformMatrix4fv(planet_shader.u_view_loc, 1, GL_FALSE, cview);
+        glUniformMatrix4fv(planet_shader.u_projection_loc, 1, GL_FALSE, projection);
+        glUniformMatrix4fv(planet_shader.u_light_space_matrix_loc, 1, GL_FALSE, light_space_matrix);
+
+        glUniform3f(glGetUniformLocation(planet_shader.id, "u_light_dir"), light_dir.x, light_dir.y, light_dir.z);
+        glUniform3f(glGetUniformLocation(planet_shader.id, "u_view_pos"), pos.x, pos.y, pos.z);
+        mat4_perspective(projection, 45.0f, aspectRatio, 1000.0f, 40000000000.0f);
+        draw_object(&gas_planet, &planet_shader, mesh_pool, GL_TRIANGLES);
 
         SwapBuffers(hDC);
 
         if (!PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) Sleep(0);
-    }    return 0;
+    }
+    return 0;
 }
+
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE:
-            ShowCursor(FALSE);
+            //ShowCursor(FALSE);
             SetCapture(hWnd);
             {
                 // Clip cursor to client area
@@ -676,7 +888,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 ClientToScreen(hWnd, &ul);
                 ClientToScreen(hWnd, &lr);
                 RECT clipRect = {ul.x, ul.y, lr.x, lr.y};
-                ClipCursor(&clipRect);
+                //ClipCursor(&clipRect);
             }
             return 0;
             break;
@@ -721,7 +933,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
             POINT centerScreen = {centerX, centerY};
             ClientToScreen(hWnd, &centerScreen);
-            SetCursorPos(centerScreen.x, centerScreen.y);
+            //SetCursorPos(centerScreen.x, centerScreen.y);
 
             //view.x += (LOWORD(lParam) - centerX)*0.01;
             //view.y += (HIWORD(lParam) - centerY)*0.01;
