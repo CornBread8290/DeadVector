@@ -189,4 +189,9 @@ typedef struct {
 
 extern const Material* material_pool[MAX_MATERIALS];
 
+void hud_setup_triangles(void);
+void hud_setup_font(const char* ttf_path, float px);
+void hud_draw(const char* text);
+
 #endif // DEFS_H
+

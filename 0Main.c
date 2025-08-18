@@ -99,6 +99,149 @@ ShaderProgram shadow_shader, main_shader;
 GLuint skybox_vao, skybox_vbo, skybox_ibo;
 Mat4 light_space_matrix;
 
+#include <glad/gl.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Static GL objects
+static GLuint hud_vao = 0, hud_vbo = 0, hud_prog = 0, hud_tex = 0;
+static GLint  u_screen_size = -1, u_pos_size = -1, u_sampler0 = -1;
+
+static const char* HUD_VS =
+"#version 330 core\n"
+"layout(location=0) in vec2 in_pos;\n"
+"layout(location=1) in vec2 in_uv;\n"
+"uniform vec2 u_screen_size; // pixels\n"
+"uniform vec4 u_pos_size;    // x,y,w,h in pixels\n"
+"out vec2 v_uv;\n"
+"void main(){\n"
+"  vec2 p = u_pos_size.xy + in_pos * u_pos_size.zw; // pixel coords\n"
+"  vec2 ndc = (p / u_screen_size) * 2.0 - 1.0;      // to NDC\n"
+"  ndc.y = -ndc.y;                                   // flip Y for screen space\n"
+"  gl_Position = vec4(ndc, 0.0, 1.0);\n"
+"  v_uv = in_uv;\n"
+"}\n";
+
+static const char* HUD_FS =
+"#version 330 core\n"
+"in vec2 v_uv;\n"
+"out vec4 frag;\n"
+"uniform sampler2D u_tex0;\n"
+"void main(){ frag = texture(u_tex0, v_uv); }\n";
+
+// Compile helper
+static GLuint hud_compile(GLenum type, const char* src){
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    GLint ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if(!ok){ glDeleteShader(s); return 0; }
+    return s;
+}
+
+static GLuint hud_link(GLuint vs, GLuint fs){
+    GLuint p = glCreateProgram();
+    glAttachShader(p, vs); glAttachShader(p, fs);
+    glLinkProgram(p);
+    GLint ok = 0; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if(!ok){ glDeleteProgram(p); return 0; }
+    return p;
+}
+
+static GLuint hud_make_black_rgba_tex(void){
+    GLuint t=0; glGenTextures(1,&t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    unsigned char px[4] = {0,0,0,255}; // opaque black
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1,1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return t;
+}
+
+void hud_init_minimal(void){
+    if (hud_vao) return; // already inited
+
+    // Shader
+    GLuint vs = hud_compile(GL_VERTEX_SHADER,   HUD_VS);
+    GLuint fs = hud_compile(GL_FRAGMENT_SHADER, HUD_FS);
+    hud_prog = hud_link(vs, fs);
+    glDeleteShader(vs); glDeleteShader(fs);
+
+    u_screen_size = glGetUniformLocation(hud_prog, "u_screen_size");
+    u_pos_size    = glGetUniformLocation(hud_prog, "u_pos_size");
+    u_sampler0    = glGetUniformLocation(hud_prog, "u_tex0");
+
+    float verts[] = {
+        // x, y,  u, v
+         0, 0,   0, 0,
+         1, 0,   1, 0,
+         1, 1,   1, 1,
+         0, 0,   0, 0,
+         1, 1,   1, 1,
+         0, 1,   0, 1,
+    };
+
+    glGenVertexArrays(1, &hud_vao);
+    glGenBuffers(1, &hud_vbo);
+    glBindVertexArray(hud_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, hud_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float)*4, (void*)(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(float)*4, (void*)(sizeof(float)*2));
+    glBindVertexArray(0);
+
+    // Texture: 1x1 black RGBA8
+    hud_tex = hud_make_black_rgba_tex();
+}
+
+void hud_set_texture(GLuint tex){
+    if (!tex) return;
+    if (hud_tex) glDeleteTextures(1, &hud_tex);
+    hud_tex = tex;
+}
+
+void draw_hud(void){
+    if (!hud_vao) hud_init_minimal();
+
+    GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+    float W = (float)vp[2], H = (float)vp[3];
+
+    float x = 8.0f, y = 8.0f, w = 160.0f, h = 40.0f;
+
+    // Render state (very light touch)
+    GLboolean blend_was = glIsEnabled(GL_BLEND);
+    GLint last_prog = 0, last_tex = 0, last_active = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &last_prog);
+    glGetIntegerv(GL_ACTIVE_TEXTURE,  &last_active);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_tex);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glUseProgram(hud_prog);
+    glUniform2f(u_screen_size, W, H);
+    // u_pos_size.xy = anchor in pixels (top-left), .zw = width/height
+    glUniform4f(u_pos_size, x, y, w, h);
+    glUniform1i(u_sampler0, 0);
+
+    glBindVertexArray(hud_vao);
+    glBindTexture(GL_TEXTURE_2D, hud_tex);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    // Restore minimal state
+    glBindTexture(GL_TEXTURE_2D, last_tex);
+    glUseProgram(last_prog);
+    if (!blend_was) glDisable(GL_BLEND);
+    glActiveTexture(last_active);
+}
+
 
 void setup_shadow_mapping() {
     glGenFramebuffers(1, &shadow_fbo);
@@ -484,11 +627,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         return 1;
     }
 
+    glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_MULTISAMPLE);
     //glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK); // Cull back-facing triangles
-        glFrontFace(GL_CCW); // Counter-clockwise is front (default)
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
 
 
 
@@ -712,12 +857,15 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     glBindVertexArray(0);
 
+    //HUD
+    hud_init_minimal();
 
 
+
+    
     // 8. Main loop
     MSG msg;
     bool running = true;
-
     while (running) {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) running = false;
@@ -867,6 +1015,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         mat4_perspective(projection, 45.0f, aspectRatio, 1000.0f, 40000000000.0f);
         draw_object(&gas_planet, &planet_shader, mesh_pool, GL_TRIANGLES);
 
+        glDisable(GL_DEPTH_TEST);
+        //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        draw_hud();
+        glEnable(GL_DEPTH_TEST);
+        
         SwapBuffers(hDC);
 
         if (!PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) Sleep(0);
