@@ -1,11 +1,11 @@
 #include "defs.h"
 
-#define FONT_FIRST 32          // ASCII ' '
-#define FONT_COUNT 96          // printable ASCII 32..127
-#define SHIFT_DOWN 3           // draw descenders 3px lower
+#define FONT_FIRST 32         
+#define FONT_COUNT 96    
+#define SHIFT_DOWN 3      
 
 const uint8_t font_meta[FONT_COUNT/2] = {
-    0x10, // 32:' ' (0), 33:'!' (1)
+    0x14, // 32:' ' (0), 33:'!' (1)
     0x53, // 34:'"' (3), 35:'#' (5)
     0x45, // 36:'$' (5), 37:'%' (4)
     0x15, // 38:'&' (5), 39:'\''(1)
@@ -55,6 +55,11 @@ const uint8_t font_meta[FONT_COUNT/2] = {
     0x06, // 126:'~'(6), 127:DEL (0/unused)
 };
 const uint8_t font_bits[] = {
+    0b00000000,
+    0b00000000,
+    0b00000000,
+    0b00000000,
+
     0b10011111,//!
 
     0b00000111,//"
@@ -603,9 +608,6 @@ static int font_text_w(const char* s) {
     }
     return w;
 }
-#include <glad/gl.h>
-#include <stdlib.h>
-#include <string.h>
 
 // Static GL objects
 static GLuint hud_vao = 0, hud_vbo = 0, hud_prog = 0, hud_tex = 0;
@@ -618,30 +620,16 @@ static int hud_dirty = 0;
 
 static const char* HUD_VS =
 "#version 330 core\n"
-"layout(location=0) in vec2 in_pos;\n"
-"layout(location=1) in vec2 in_uv;\n"
-"uniform vec2 u_screen_size;\n"
-"uniform vec4 u_pos_size; // x,y,w,h in pixels\n"
-"out vec2 v_uv;\n"
-"void main(){\n"
-"  vec2 p = u_pos_size.xy + in_pos * u_pos_size.zw;\n"
-"  vec2 ndc = (p / u_screen_size) * 2.0 - 1.0;\n"
-"  ndc.y = -ndc.y;\n"
-"  gl_Position = vec4(ndc, 0.0, 1.0);\n"
-"  v_uv = in_uv;\n"
-"}\n";
+"layout(location=0)in vec2 a;layout(location=1)in vec2 b;"
+"uniform vec2 u_screen_size;uniform vec4 u_pos_size;out vec2 v;"
+"void main(){vec2 n=(u_pos_size.xy+a*u_pos_size.zw)/u_screen_size*2.0-1.0;"
+"gl_Position=vec4(n.x,-n.y,0.0,1.0);v=b;}";
 
 static const char* HUD_FS =
 "#version 330 core\n"
-"in vec2 v_uv; out vec4 frag;\n"
-"uniform sampler2D u_tex0;\n"
-"uniform vec4 u_bg_rgba; // background color in RGBA\n"
-"void main(){\n"
-"  float a = texture(u_tex0, v_uv).r;       // glyph alpha from R\n"
-"  vec3 col = mix(u_bg_rgba.rgb, vec3(1.0), a);\n"
-"  float oa = max(u_bg_rgba.a, a);          // ensure at least bg alpha\n"
-"  frag = vec4(col, oa);\n"
-"}\n";
+"in vec2 v;out vec4 f;uniform sampler2D u_tex0;uniform vec4 u_bg_rgba;"
+"void main(){vec4 b=u_bg_rgba;float a=texture(u_tex0,v).r;"
+"f=vec4(mix(b.rgb,vec3(1.0),a),max(b.a,a));}";
 
 static GLuint hud_compile(GLenum type, const char* src){
     GLuint s = glCreateShader(type);

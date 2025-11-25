@@ -24,7 +24,7 @@ float lerp(float a, float b, float t) {
     return a + t * (b - a);
 }
 
-float smoothstep(float edge0, float edge1, float x) {
+float smoothstep(const float edge0, const float edge1, const float x) {
     float t = (x - edge0) / (edge1 - edge0);
     t = t < 0 ? 0 : (t > 1 ? 1 : t);
     return t * t * (3.0f - 2.0f * t);
@@ -35,7 +35,7 @@ float hashf3(Vec3 p) {
     h ^= h >> 13;
     h *= 1274126177;
     h ^= h >> 16;
-    return (h & 0xFFFFFF) / (float)0xFFFFFF;
+    return (0xFFFFFF & h) / (float)0xFFFFFF;
 }
 
 float noise3f(Vec3 p) {
@@ -61,7 +61,7 @@ float fbm(Vec3 p, int octaves, float persistence, float lacunarity) {
     float total = 0.0f;
 
     for (int i = 0; i < octaves; i++) {
-        Vec3 sample = {
+        const Vec3 sample = {
             p.x * frequency,
             p.y * frequency,
             p.z * frequency
@@ -97,7 +97,7 @@ Vec3 vec3_cross(Vec3 a, Vec3 b) {
         a.z * b.x - a.x * b.z,
         a.x * b.y - a.y * b.x
     };
-}   
+}
 Vec3 vec3_add(Vec3 a, Vec3 b) {
     return (Vec3){ a.x + b.x, a.y + b.y, a.z + b.z };
 }
@@ -113,15 +113,15 @@ Vec3 vec3_invert(Vec3 v) {
 Vec3 quat_rotate_vec3(Quat q, Vec3 v) {
     // q * v * conj(q)
     Vec3 out;
-    
+
     Vec3 u = { q.x, q.y, q.z };
-    
+
     Vec3 uv = {
         u.y * v.z - u.z * v.y,
         u.z * v.x - u.x * v.z,
         u.x * v.y - u.y * v.x
     };
-    
+
     Vec3 uuv = {
         u.y * uv.z - u.z * uv.y,
         u.z * uv.x - u.x * uv.z,
@@ -206,15 +206,11 @@ int color4_equals(Color4 a, Color4 b) {
            float_equals(a.a, b.a);
 }
 
-int vertex_equals(VertexFormat* a, VertexFormat* b) {
+int vertex_equals(const VertexFormat* a, const VertexFormat* b) {
     return vec3_equals(a->position, b->position) &&
-           vec3_equals(a->normal, b->normal) &&
-           vec4_equals(a->tangent, b->tangent) &&
-           color4_equals(a->color, b->color) &&
-           uv_equals(a->uv, b->uv) &&
-           float_equals(a->roughness, b->roughness) &&
-           float_equals(a->metallic, b->metallic) &&
-           float_equals(a->emissive, b->emissive);
+           vec3_equals(a->normal,   b->normal)   &&
+           color4_equals(a->color,  b->color)    &&
+           uv_equals(a->uv,         b->uv);
 }
 void mat4_perspective(float* out, float fovY_deg, float aspect, float zNear, float zFar) {
     float f = 1.0f / tanf((fovY_deg * 3.14159265f / 180.0f) / 2.0f);
@@ -303,21 +299,21 @@ void quat_to_matrix(const Quat* q, Mat4 m) {
 void init_mesh(Mesh* mesh, int vertex_capacity, int index_capacity) {
     mesh->vertex_count = 0;
     mesh->index_count = 0;
-
     mesh->vertex_capacity = vertex_capacity;
     mesh->index_capacity = index_capacity;
 
     mesh->vertices = malloc(sizeof(VertexFormat) * vertex_capacity);
-    mesh->indices = malloc(sizeof(unsigned int) * index_capacity);
+    mesh->indices  = malloc(sizeof(unsigned) * index_capacity);
 
-    mesh->vao = 0;
-    mesh->vbo = 0;
-    mesh->ibo = 0;
+    mesh->submeshes = NULL;
+    mesh->submesh_count = 0;
 
+    mesh->vao = 0; mesh->vbo = 0; mesh->ibo = 0;
     glGenVertexArrays(1, &mesh->vao);
     glGenBuffers(1, &mesh->vbo);
     glGenBuffers(1, &mesh->ibo);
 }
+
 int find_or_add_vertex(Mesh* mesh, VertexFormat v) {
     for (int i = 0; i < mesh->vertex_count; i++) {
         if (vertex_equals(&mesh->vertices[i], &v)) {
@@ -350,12 +346,16 @@ void upload_mesh(Mesh* mesh) {
     glBindVertexArray(mesh->vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
-    glBufferData(GL_ARRAY_BUFFER, mesh->vertex_count * sizeof(VertexFormat), mesh->vertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)(mesh->vertex_count * sizeof(VertexFormat)),
+                 mesh->vertices, GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh->index_count * sizeof(unsigned int), mesh->indices, GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 (GLsizeiptr)(mesh->index_count * sizeof(unsigned int)),
+                 mesh->indices, GL_STATIC_DRAW);
 
-    size_t stride = sizeof(VertexFormat);
+    GLsizei stride = sizeof(VertexFormat);
     size_t offset = 0;
 
     glEnableVertexAttribArray(0); // position
@@ -366,10 +366,6 @@ void upload_mesh(Mesh* mesh) {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)offset);
     offset += sizeof(Vec3);
 
-    glEnableVertexAttribArray(2); // tangent
-    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(Vec4);
-
     glEnableVertexAttribArray(3); // color
     glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, (void*)offset);
     offset += sizeof(Color4);
@@ -378,42 +374,340 @@ void upload_mesh(Mesh* mesh) {
     glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, stride, (void*)offset);
     offset += sizeof(UV);
 
-    glEnableVertexAttribArray(5); // roughness
-    glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(float);
+    glDisableVertexAttribArray(2); // tangent
+    glDisableVertexAttribArray(5); // roughness
+    glDisableVertexAttribArray(6); // metallic
+    glDisableVertexAttribArray(7); // emissive
 
-    glEnableVertexAttribArray(6); // metallic
-    glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(float);
-
-    glEnableVertexAttribArray(7); // emissive
-    glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(float);
-
-    glBindVertexArray(0); // 🔐 Good practice
+    glBindVertexArray(0);
 }
 
+void draw_object(const Object* obj, const ShaderProgram* shader, Mesh* mesh_pool[], const GLenum primitive_type) {
 
-void draw_object(const Object* obj, ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type) {
     const Mesh* mesh = mesh_pool[obj->mesh_id];
     if (!mesh || !(obj->flags & OBJ_FLAG_VISIBLE)) return;
 
-    // Compute model matrix from transform
-    Mat4 model, trans, rot, scale;
+    Mat4 model, trans, rot, scale, trs;
     mat4_identity(model);
     mat4_identity(trans);
     mat4_translate(trans, obj->position.x, obj->position.y, obj->position.z);
     quat_to_matrix(&obj->rotation, rot);
     mat4_identity(scale);
     mat4_scale(scale, obj->scale.x, obj->scale.y, obj->scale.z);
-
-    // M = T * R * S
-    Mat4 trs;
     mat4_multiply(trs, rot, scale);
     mat4_multiply(model, trans, trs);
-
     glUniformMatrix4fv(shader->u_model_loc, 1, GL_FALSE, model);
 
-    draw_mesh((Mesh*)mesh, primitive_type);
+    if (mesh->submesh_count <= 0) {
+        const Material* mat = material_pool[(unsigned)mesh->material_id];
+        if (mat) {
+            glUniform4f(shader->u_material_albedo_loc,    mat->albedo.r, mat->albedo.g, mat->albedo.b, mat->albedo.a);
+            glUniform1f(shader->u_material_roughness_loc, mat->roughness);
+            glUniform1f(shader->u_material_metallic_loc,  mat->metallic);
+            glUniform1f(shader->u_material_emissive_loc,  mat->emissive);
+        }
+        draw_mesh((Mesh*)mesh, primitive_type);
+        return;
+    }
+
+    glBindVertexArray(mesh->vao);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    for (int pass = 0; pass < 2; ++pass) {
+        const int transp = (pass == 1);
+        glDepthMask(transp ? GL_FALSE : GL_TRUE);
+        if (transp) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+
+        for (int i = 0; i < mesh->submesh_count; ++i) {
+            const SubMesh* s = &mesh->submeshes[i];
+            const Material* mat = material_pool[s->material_id];
+            if (!mat) continue;
+
+            const int isT = (mat->albedo.a < 0.999f);
+            if (isT != transp) continue;
+
+            glUniform4f(shader->u_material_albedo_loc,    mat->albedo.r, mat->albedo.g, mat->albedo.b, mat->albedo.a);
+            glUniform1f(shader->u_material_roughness_loc, mat->roughness);
+            glUniform1f(shader->u_material_metallic_loc,  mat->metallic);
+            glUniform1f(shader->u_material_emissive_loc,  mat->emissive);
+
+            glDrawElements(primitive_type, s->index_count, GL_UNSIGNED_INT,
+                           (void*)(sizeof(unsigned) * s->index_offset));
+        }
+    }
+
+    glDepthMask(GL_TRUE);
+    glBindVertexArray(0);
+
 }
 
+
+
+
+static void ensure_v(Mesh* m, int add){
+    int need = m->vertex_count + add;
+    if (need > m->vertex_capacity){
+        m->vertex_capacity = need*2 + 8;
+        m->vertices = realloc(m->vertices, sizeof(VertexFormat)*m->vertex_capacity);
+    }
+}
+static void ensure_i(Mesh* m, int add){
+    int need = m->index_count + add;
+    if (need > m->index_capacity){
+        m->index_capacity = need*2 + 8;
+        m->indices = realloc(m->indices, sizeof(unsigned)*m->index_capacity);
+    }
+}
+static Vec3 v3(float x,float y,float z){ return (Vec3){x,y,z}; }
+static Vec3 vadd(Vec3 a, Vec3 b){ return (Vec3){a.x+b.x,a.y+b.y,a.z+b.z}; }
+static Vec3 vsub(Vec3 a, Vec3 b){ return (Vec3){a.x-b.x,a.y-b.y,a.z-b.z}; }
+static Vec3 vmad(Vec3 a, Vec3 b, float s){ return (Vec3){a.x+b.x*s,a.y+b.y*s,a.z+b.z*s}; }
+
+Mask mask_all(const Mesh* m){ Mask s=(Mask)malloc((size_t)m->vertex_count); memset(s,1,(size_t)m->vertex_count); return s; }
+Mask mask_box(const Mesh* m, Vec3 mn, Vec3 mx){
+    Mask s=(Mask)calloc((size_t)m->vertex_count,1);
+    for(int i=0;i<m->vertex_count;i++){
+        Vec3 p=m->vertices[i].position;
+        s[i]=(p.x>=mn.x&&p.y>=mn.y&&p.z>=mn.z&&p.x<=mx.x&&p.y<=mx.y&&p.z<=mx.z);
+    } return s;
+}
+Mask mask_sphere(const Mesh* m, Vec3 c, float r){
+    float r2=r*r; Mask s=(Mask)calloc((size_t)m->vertex_count,1);
+    for(int i=0;i<m->vertex_count;i++){ Vec3 p=vsub(m->vertices[i].position,c);
+        s[i]=(p.x*p.x+p.y*p.y+p.z*p.z)<=r2;
+    } return s;
+}
+int  mask_count(const Mesh* m, const Mask s){ int n=0; for(int i=0;i<m->vertex_count;i++) n+=s[i]!=0; return n; }
+
+Mask mask_grow(const Mesh* m, const Mask in){
+    Mask out=(Mask)malloc((size_t)m->vertex_count); memcpy(out,in,(size_t)m->vertex_count);
+    for(int i=0;i<m->index_count;i+=3){
+        unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
+        if(in[a]||in[b]||in[c]){ out[a]=out[b]=out[c]=1; }
+    } return out;
+}
+Mask mask_shrink_fulltri(const Mesh* m, const Mask in){
+    Mask keep=(Mask)calloc((size_t)m->vertex_count,1);
+    for(int i=0;i<m->index_count;i+=3){
+        unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
+        if(in[a]&&in[b]&&in[c]) keep[a]=keep[b]=keep[c]=1;
+    } return keep;
+}
+Mask mask_not(const Mesh* m, const Mask a){
+    Mask o=(Mask)malloc((size_t)m->vertex_count);
+    for(int i=0;i<m->vertex_count;i++) o[i]=!a[i];
+    return o;
+}
+Mask mask_and(const Mesh* m, const Mask a, const Mask b){
+    Mask o=(Mask)malloc((size_t)m->vertex_count);
+    for(int i=0;i<m->vertex_count;i++) o[i]=a[i]&&b[i];
+    return o;
+}
+Mask mask_andnot(const Mesh* m, const Mask a, const Mask b){
+    Mask o=(Mask)malloc((size_t)m->vertex_count);
+    for(int i=0;i<m->vertex_count;i++) o[i]=a[i]&&!b[i];
+    return o;
+}
+
+void sel_translate(Mesh* m, Mask s, Vec3 d){
+    for(int i=0;i<m->vertex_count;i++) if(s[i]) m->vertices[i].position=vadd(m->vertices[i].position,d);
+}
+void sel_scale(Mesh* m, Mask s, Vec3 pivot, Vec3 k){
+    for(int i=0;i<m->vertex_count;i++) if(s[i]){
+        Vec3 p=vsub(m->vertices[i].position,pivot);
+        p.x*=k.x; p.y*=k.y; p.z*=k.z;
+        m->vertices[i].position=vadd(p,pivot);
+    }
+}
+void sel_rotate(Mesh* m, Mask s, Vec3 pivot, Vec3 axis, float ang){
+    Quat q=quat_axis_angle(axis.x,axis.y,axis.z,ang);
+    for(int i=0;i<m->vertex_count;i++) if(s[i]){
+        Vec3 p=vsub(m->vertices[i].position,pivot);
+        p=quat_rotate_vec3(q,p);
+        m->vertices[i].position=vadd(p,pivot);
+        m->vertices[i].normal = vec3_normalize(quat_rotate_vec3(q,m->vertices[i].normal));
+    }
+}
+
+// whole-mesh transforms
+void mesh_scale_all(Mesh* m, Vec3 k){
+    Mask s=mask_all(m); sel_scale(m,s,(Vec3){0,0,0},k); free(s);
+}
+void mesh_translate_all(Mesh* m, Vec3 d){
+    Mask s=mask_all(m); sel_translate(m,s,d); free(s);
+}
+
+static Vec3 reflect(Vec3 p, Vec3 n, float d){
+    float t=(n.x*p.x+n.y*p.y+n.z*p.z+d)*2.0f;
+    return (Vec3){p.x-n.x*t,p.y-n.y*t,p.z-n.z*t};
+}
+Mask sel_mirror(Mesh* m, const Mask s, const Vec3 n, const float d, const char duplicate){
+    if(!duplicate){ for(int i=0;i<m->vertex_count;i++) if(s[i]) m->vertices[i].position=reflect(m->vertices[i].position,n,d); return NULL; }
+    int vc=m->vertex_count; int *map=(int*)malloc(sizeof(int)*vc); for(int i=0;i<vc;i++) map[i]=-1;
+    for(int i=0;i<vc;i++) if(s[i]){ ensure_v(m,1); map[i]=m->vertex_count++; m->vertices[map[i]]=m->vertices[i];
+        m->vertices[map[i]].position=reflect(m->vertices[i].position,n,d);
+        m->vertices[map[i]].normal=vec3_normalize(reflect(m->vertices[i].normal,n,0));
+    }
+    for(int i=0;i<m->index_count;i+=3){
+        unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
+        if(s[a]&&s[b]&&s[c]){ ensure_i(m,3);
+            m->indices[m->index_count++]=(unsigned)map[a];
+            m->indices[m->index_count++]=(unsigned)map[c];
+            m->indices[m->index_count++]=(unsigned)map[b];
+        }
+    }
+    Mask out=(Mask)calloc((size_t)m->vertex_count,1);
+    for(int i=0;i<vc;i++) if(map[i]>=0) out[map[i]]=1;
+    free(map); return out;
+}
+Mask sel_extrude_tris(Mesh* m, Mask s, Vec3 dir, float dist, int keep_base){
+    int vc=m->vertex_count, ic=m->index_count;
+    int *map=(int*)malloc(sizeof(int)*vc); for(int i=0;i<vc;i++) map[i]=-1;
+    for(int i=0;i<ic;i+=3){
+        unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
+        if(!(s[a]||s[b]||s[c])) continue;
+        if(map[a]<0){ ensure_v(m,1); map[a]=m->vertex_count++; m->vertices[map[a]]=m->vertices[a]; m->vertices[map[a]].position=vmad(m->vertices[a].position,dir,dist); }
+        if(map[b]<0){ ensure_v(m,1); map[b]=m->vertex_count++; m->vertices[map[b]]=m->vertices[b]; m->vertices[map[b]].position=vmad(m->vertices[b].position,dir,dist); }
+        if(map[c]<0){ ensure_v(m,1); map[c]=m->vertex_count++; m->vertices[map[c]]=m->vertices[c]; m->vertices[map[c]].position=vmad(m->vertices[c].position,dir,dist); }
+    }
+    for(int i=0;i<ic;i+=3){
+        unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
+        if(!(s[a]&&s[b]&&s[c])) continue;
+        unsigned na=(unsigned)map[a], nb=(unsigned)map[b], nc=(unsigned)map[c];
+        ensure_i(m,3); m->indices[m->index_count++]=na; m->indices[m->index_count++]=nb; m->indices[m->index_count++]=nc;
+        ensure_i(m,6); m->indices[m->index_count++]=a; m->indices[m->index_count++]=b; m->indices[m->index_count++]=nb;
+                       m->indices[m->index_count++]=a; m->indices[m->index_count++]=nb; m->indices[m->index_count++]=na;
+        ensure_i(m,6); m->indices[m->index_count++]=b; m->indices[m->index_count++]=c; m->indices[m->index_count++]=nc;
+                       m->indices[m->index_count++]=b; m->indices[m->index_count++]=nc; m->indices[m->index_count++]=nb;
+        ensure_i(m,6); m->indices[m->index_count++]=c; m->indices[m->index_count++]=a; m->indices[m->index_count++]=na;
+                       m->indices[m->index_count++]=c; m->indices[m->index_count++]=na; m->indices[m->index_count++]=nc;
+        if(!keep_base) m->indices[i]=m->indices[i+1]=m->indices[i+2]=a;
+    }
+    for(int i=0;i<vc;i++) if(map[i]>=0) m->vertices[map[i]].normal=vec3_normalize(dir);
+    Mask out=(Mask)calloc((size_t)m->vertex_count,1);
+    for(int i=0;i<vc;i++) if(map[i]>=0) out[map[i]]=1;
+    free(map); return out;
+}
+int assign_submesh_from_mask(Mesh* m, Mask s, unsigned material_id){
+    if(!m || !m->indices || !s) return -1;
+
+    int start = m->index_count;
+    int ic    = m->index_count;
+    int added = 0;
+
+    for (int i = 0; i < ic; i += 3) {
+        unsigned a = m->indices[i], b = m->indices[i+1], c = m->indices[i+2];
+        if (s[a] && s[b] && s[c]) {
+            ensure_i(m, 3);
+            m->indices[m->index_count++] = a;
+            m->indices[m->index_count++] = b;
+            m->indices[m->index_count++] = c;
+            added += 3;
+        }
+    }
+
+    if (!added) return -1;
+
+    m->submeshes = (SubMesh*)realloc(m->submeshes, sizeof(SubMesh)*(m->submesh_count+1));
+    int idx = m->submesh_count++;
+    m->submeshes[idx] = (SubMesh){ .index_offset = start, .index_count = added, .material_id = material_id };
+    return idx;
+}
+
+void mesh_clear(Mesh* m){ m->vertex_count=0; m->index_count=0; m->submesh_count=0; }
+
+// 8-vert box, 12 tris
+void make_box(Mesh* m, Vec3 mn, Vec3 mx){
+    mesh_clear(m); ensure_v(m,8); ensure_i(m,36);
+    Color4 white={1,1,1,1}; UV zuv={0,0};
+    int base=m->vertex_count;
+    Vec3 p[8]={ v3(mn.x,mn.y,mn.z), v3(mx.x,mn.y,mn.z), v3(mx.x,mx.y,mn.z), v3(mn.x,mx.y,mn.z),
+                v3(mn.x,mn.y,mx.z), v3(mx.x,mn.y,mx.z), v3(mx.x,mx.y,mx.z), v3(mn.x,mx.y,mx.z) };
+    for(int i=0;i<8;i++){ m->vertices[m->vertex_count++]=(VertexFormat){p[i],v3(0,0,1),white,zuv}; }
+    unsigned q[36]={ 0,1,2,0,2,3, 4,6,5,4,7,6, 0,4,5,0,5,1, 1,5,6,1,6,2, 2,6,7,2,7,3, 3,7,4,3,4,0 };
+    for(int i=0;i<36;i++) m->indices[m->index_count++]=base+q[i];
+}
+
+// regular N-gon prism with caps
+void make_prism(Mesh* m, int sides, float r, float h){
+    if(sides<3) sides=3;
+    mesh_clear(m);
+    ensure_v(m, (sides*2)+2); // rings + cap centers
+    ensure_i(m, sides*12);
+    Color4 white={1,1,1,1}; UV zuv={0,0};
+    float z0=-h*0.5f, z1=h*0.5f;
+    int base=m->vertex_count;
+    // ring verts
+    for(int i=0;i<sides;i++){
+        float a=(float)i*(2.0f*3.14159265f)/sides; float c=cosf(a), s=sinf(a);
+        m->vertices[m->vertex_count++]=(VertexFormat){ v3(r*c,r*s,z0), v3(c,s,0), white, zuv };
+        m->vertices[m->vertex_count++]=(VertexFormat){ v3(r*c,r*s,z1), v3(c,s,0), white, zuv };
+    }
+    int c0=m->vertex_count++; m->vertices[c0]=(VertexFormat){ v3(0,0,z0), v3(0,0,-1), white, zuv };
+    int c1=m->vertex_count++; m->vertices[c1]=(VertexFormat){ v3(0,0,z1), v3(0,0, 1), white, zuv };
+    // sides
+    for(int i=0;i<sides;i++){
+        int i0=(base + 2*i), i1=(base + 2*((i+1)%sides));
+        int j0=i0+1, j1=i1+1;
+        ensure_i(m,6); m->indices[m->index_count++]=i0; m->indices[m->index_count++]=i1; m->indices[m->index_count++]=j1;
+                       m->indices[m->index_count++]=i0; m->indices[m->index_count++]=j1; m->indices[m->index_count++]=j0;
+        // cap bottom (fan)
+        ensure_i(m,3); m->indices[m->index_count++]=c0; m->indices[m->index_count++]=i1; m->indices[m->index_count++]=i0;
+        // cap top (fan)
+        ensure_i(m,3); m->indices[m->index_count++]=c1; m->indices[m->index_count++]=j0; m->indices[m->index_count++]=j1;
+    }
+}
+
+void make_cubesphere(Mesh* m, Vec3 center, float r, int subdivs){
+    if(subdivs<1) subdivs=1;
+    mesh_clear(m);
+    int faces=6, N=subdivs+1;
+    ensure_v(m, faces*N*N); ensure_i(m, faces*subdivs*subdivs*6);
+    Vec3 normals[6]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    Color4 white={1,1,1,1}; UV zuv={0,0};
+    float step=2.0f/subdivs;
+    for(int f=0;f<6;f++){
+        Vec3 n=normals[f], ax=v3(0,0,0), ay=v3(0,0,0);
+        if(f==0||f==1){ ax.z=1; ay.y=1; } else if(f==2||f==3){ ax.x=1; ay.z=1; } else { ax.x=1; ay.y=1; }
+        int idx[N][N];
+        for(int i=0;i<=subdivs;i++){
+            for(int j=0;j<=subdivs;j++){
+                float x=-1.0f+step*i, y=-1.0f+step*j;
+                Vec3 p=vadd(n, vadd( (Vec3){ax.x*x,ax.y*x,ax.z*x}, (Vec3){ay.x*y,ay.y*y,ay.z*y} ));
+                Vec3 dir=vec3_normalize(p);
+                VertexFormat v={ v3(center.x+dir.x*r, center.y+dir.y*r, center.z+dir.z*r),
+                                 dir, white, zuv };
+                idx[i][j]=find_or_add_vertex(m, v);
+            }
+        }
+        for(int i=0;i<subdivs;i++) for(int j=0;j<subdivs;j++){
+            int a=idx[i][j], b=idx[i+1][j], c=idx[i][j+1], d=idx[i+1][j+1];
+            ensure_i(m,6); m->indices[m->index_count++]=a; m->indices[m->index_count++]=b; m->indices[m->index_count++]=c;
+                           m->indices[m->index_count++]=c; m->indices[m->index_count++]=b; m->indices[m->index_count++]=d;
+        }
+    }
+}
+
+void make_icosahedron_sphere(Mesh* m, Vec3 c, float r){
+    mesh_clear(m);
+    const float t=0.525731112f, u=0.850650808f;
+    const Vec3 V[12]={
+        {-t, 0,  u},{ t, 0,  u},{-t, 0, -u},{ t, 0, -u},
+        { 0, u,  t},{ 0, u, -t},{ 0,-u,  t},{ 0,-u, -t},
+        { u, t,  0},{-u, t,  0},{ u,-t,  0},{-u,-t,  0}
+    };
+    const unsigned F[60]={
+        0,4,1, 0,9,4, 9,5,4, 4,5,8, 4,8,1,
+        8,10,1, 8,3,10, 5,3,8, 5,2,3, 2,7,3,
+        7,10,3, 7,6,10, 7,11,6, 11,0,6, 0,1,6,
+        6,1,10, 9,0,11, 9,11,2, 9,2,5, 7,2,11
+    };
+    Color4 white={1,1,1,1}; UV zuv={0,0};
+    ensure_v(m,12); ensure_i(m,60);
+    int base=m->vertex_count;
+    for(int i=0;i<12;i++){
+        Vec3 d=vec3_normalize(V[i]);
+        m->vertices[m->vertex_count++]=(VertexFormat){ v3(c.x+d.x*r, c.y+d.y*r, c.z+d.z*r), d, white, zuv };
+    }
+    for(int i=0;i<60;i++) m->indices[m->index_count++]=base+F[i];
+}

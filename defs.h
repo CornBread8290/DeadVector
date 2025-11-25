@@ -5,14 +5,16 @@
 #include <windows.h>
 #include <glad/gl.h>
 #include <glad/wgl.h>
+#include <stdint.h>
 
 extern float aspectRatio;
 
+#define pi 3.14159265358979323846f
+#define pi2 (pi * 2.0f)
+#define DEG2RAD (3.14159265f / 180.0f)
 
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned int uint32_t;
-typedef short int int16_t;
+#define NUM_STARS 80000
+
 
 typedef struct { float x, y; } Vec2;
 typedef struct { float x, y, z; } Vec3;
@@ -23,32 +25,29 @@ typedef struct { float r, g, b, a; } Color4;
 typedef struct {
     Vec3 position;
     Vec3 normal;
-    Vec4 tangent;       // Optional: for normal mapping
     Color4 color;
     UV uv;
-
-    float roughness;
-    float metallic;
-    float emissive;
-
 } VertexFormat;
 typedef struct {
     Color4 albedo;
-    float roughness;
-    float metallic;
-    float emissive;
+    float roughness, metallic, emissive;
+    int tex_id;
 
+    uint32_t flags;
+
+    //TO BE DEPRECATED, DO NOT USE:
     int has_texture_albedo;
     int has_texture_normal;
     int has_texture_metallic_roughness;
     int has_texture_emissive;
 } Material;
-typedef struct {
-    unsigned int albedo;
-    unsigned int normal;
-    unsigned int metallic_roughness;
-    unsigned int emissive;
-} MaterialTextures;
+#define MATERIAL_FLAG_ALBEDO     (1 << 0)
+#define MATERIAL_FLAG_NORMAL      (1 << 1)
+#define MATERIAL_FLAG_METALLIC    (1 << 2)
+#define MATERIAL_FLAG_ROUGHNESS   (1 << 3)
+#define MATERIAL_FLAG_EMISSIVE    (1 << 4)
+#define MATERIAL_IS_FLAT (1 << 5)
+
 typedef struct {
     int index_offset;
     int index_count;
@@ -75,6 +74,10 @@ typedef struct {
 
     unsigned int flags;
 } Mesh;
+#define MESH_HAS_UVS         (1 << 1)
+#define MESH_HAS_COLORS      (1 << 2)
+#define MESH_FINISHED_BAKING (1 << 3)
+
 typedef struct {
     Vec3 position;
     Quat rotation;
@@ -83,20 +86,11 @@ typedef struct {
     int mesh_id;
     unsigned int flags; 
 } Object;
-typedef struct {
-    Vec3 position;
-    Vec3 target;
-    Vec3 up;
-    float fov;
-    float zNear, zFar;
-} Camera;
+#define OBJ_FLAG_VISIBLE        (1 << 0)
+#define OBJ_FLAG_STATIC         (1 << 1)
+#define OBJ_FLAG_CAST_SHADOWS   (1 << 2)
+#define OBJ_FLAG_RECEIVE_SHADOWS (1 << 3)
 typedef float Mat4[16];
-typedef struct {
-    Vec3 position;
-    Vec3 direction;
-    float intensity;
-    Color4 color;
-} Light;
 typedef struct {
     GLuint id; // GL shader program ID
 
@@ -110,28 +104,56 @@ typedef struct {
     GLint u_material_emissive_loc;
     GLint u_light_space_matrix_loc;
 
+    GLint u_flags_loc;
+
 } ShaderProgram;
 #define MAX_MATERIALS 256
 
+// selections
+typedef unsigned char* Mask;
+Mask mask_all(const Mesh* m);
+Mask mask_box(const Mesh* m, Vec3 mn, Vec3 mx);
+Mask mask_sphere(const Mesh* m, Vec3 c, float r);
+int  mask_count(const Mesh* m, const Mask s);
+
+// transforms
+void sel_translate(Mesh* m, Mask s, Vec3 d);
+void sel_scale(Mesh* m, Mask s, Vec3 pivot, Vec3 k);
+void sel_rotate(Mesh* m, Mask s, Vec3 pivot, Vec3 axis, float ang);
+
+// mirrors & extrusion
+Mask sel_mirror(Mesh* m, Mask s, Vec3 n, float d, char duplicate);
+Mask sel_extrude_tris(Mesh* m, Mask s, Vec3 dir, float dist, int keep_base);
+
+// submesh
+int  assign_submesh_from_mask(Mesh* m, Mask s, unsigned material_id);
+
+Mask mask_grow(const Mesh* m, const Mask in);
+Mask mask_shrink_fulltri(const Mesh* m, const Mask in);
+
+// mask tiny helpers
+Mask mask_not(const Mesh* m, const Mask a);
+Mask mask_and(const Mesh* m, const Mask a, const Mask b);
+Mask mask_andnot(const Mesh* m, const Mask a, const Mask b);
+
+// cockpit builder
+void build_cockpit_interior(Mesh* m);
 
 
-#define MESH_HAS_NORMALS     (1 << 0)
-#define MESH_HAS_UVS         (1 << 1)
-#define MESH_HAS_COLORS      (1 << 2)
-#define MESH_HAS_TANGENTS    (1 << 3)
-#define MESH_HAS_BONE_WEIGHTS (1 << 4)
+// simple whole-mesh transforms
+void mesh_scale_all(Mesh* m, Vec3 k);
+void mesh_translate_all(Mesh* m, Vec3 d);
+
+// primitives
+void mesh_clear(Mesh* m);
+void make_box(Mesh* m, Vec3 mn, Vec3 mx);
+void make_prism(Mesh* m, int sides, float r, float h);        // regular N-gon prism
+void make_cubesphere(Mesh* m, Vec3 c, float r, int subdivs);
+void make_icosahedron_sphere(Mesh* m, Vec3 c, float r);
 
 
-#define OBJ_FLAG_VISIBLE        (1 << 0)
-#define OBJ_FLAG_STATIC         (1 << 1)
-#define OBJ_FLAG_CAST_SHADOWS   (1 << 2)
-#define OBJ_FLAG_RECEIVE_SHADOWS (1 << 3)
 
-#define pi 3.14159265358979323846f
-#define pi2 (pi * 2.0f)
-#define DEG2RAD (3.14159265f / 180.0f)
 
-#define NUM_STARS 80000
 
 
 uint32_t xorshift32(void);
@@ -171,7 +193,7 @@ void init_mesh(Mesh* mesh, int vertex_capacity, int index_capacity);
 void draw_mesh(Mesh* mesh, GLenum primitive_type);
 int find_or_add_vertex(Mesh* mesh, VertexFormat v);
 void upload_mesh(Mesh* mesh);
-void draw_object(const Object* obj, ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type);
+void draw_object(const Object* obj, const ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type);
 
 enum SoundType {
     SND_BEEP = 0,

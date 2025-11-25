@@ -1,0 +1,84 @@
+#version 430
+layout(local_size_x=8, local_size_y=8) in;
+layout(rgba16f, binding=0) writeonly uniform image2D outImg;
+
+float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+float n2(vec2 p){
+    vec2 i=floor(p), f=fract(p);
+    float a=h2(i), b=h2(i+vec2(1,0)), c=h2(i+vec2(0,1)), d=h2(i+vec2(1,1));
+    vec2 u=f*f*(3.0-2.0*f);
+    return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
+}
+float fbm(vec2 p){
+    float t=0.0, a=0.5;
+    for(int i=0;i<6;i++){ t+=n2(p)*a; p*=2.0; a*=0.5; }
+    return t;
+}
+// ridged 1D across latitude
+float ridged1D(float x){
+    float t=0.0, a=0.6, f=1.5;
+    for(int i=0;i<5;i++){
+        float s = n2(vec2(x*f, 13.7+11.3*i));
+        s = 1.0 - abs(2.0*s - 1.0);
+        t += s*a; f*=1.9; a*=0.55;
+    }
+    return clamp(t*0.9, 0.0, 1.0);
+}
+
+float beltBaseAt(vec2 uv){
+    float lat = (uv.y - 0.5) * 2.0;                 // -1..1 (south..north)
+    float jets  = ridged1D(lat*26.0);               // more belts than before
+    float eqAtt = smoothstep(0.0, 0.5, abs(lat));
+    float jwarp = (fbm(vec2(lat*24.0,7.3))*0.30 + fbm(vec2(lat*7.0,11.1))*0.22)
+                  * mix(0.35, 1.0, eqAtt);         // damp warp near eq
+    float micro = fbm(vec2(lat*90.0,21.7))*0.10
+                  * mix(0.25, 1.0, eqAtt);         // less micro at eq
+    float eqLift = (1.0 - eqAtt) * 0.05;            // slightly brighter EZ
+    return clamp(jets*0.70 + jwarp + micro + eqLift, 0.0, 1.0);
+}
+
+float beltShear(vec2 uv, vec2 texel){
+    float up = beltBaseAt(uv + vec2(0.0, texel.y));
+    float dn = beltBaseAt(uv - vec2(0.0, texel.y));
+    return 0.5 * (up - dn) / texel.y;               // ∂belt/∂v
+}
+
+void main(){
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = imageSize(outImg);
+    vec2  uv = (vec2(id) + 0.5) / vec2(sz);
+    vec2  texel = 1.0 / vec2(sz);
+
+    float baseBelt = beltBaseAt(uv);
+
+    float lat = (uv.y - 0.5) * 2.0;                 // -1..1
+    float jetsPerHemisphere = 7.0;                  // ≈14 total bands
+    float dirSign = sign(sin(lat * 3.14159265 * jetsPerHemisphere));
+    // stronger zonal near equator, taper to poles
+    float zonalAmp = mix(0.65, 0.20, smoothstep(0.0, 0.9, abs(lat))); // 0.65@eq → 0.2@poles
+    vec2  zonal = vec2(dirSign, 0.0) * zonalAmp;
+
+    vec2 p  = uv * 6.0;
+    vec2 g1 = vec2(fbm(p+vec2(0.002,0.0)) - fbm(p-vec2(0.002,0.0)),
+                   fbm(p+vec2(0.0,0.002)) - fbm(p-vec2(0.0,0.002))) / 0.004;
+    vec2 g2 = vec2(fbm(p*2.0+13.1+vec2(0.002,0.0)) - fbm(p*2.0+13.1-vec2(0.002,0.0)),
+                   fbm(p*2.0+13.1+vec2(0.0,0.002)) - fbm(p*2.0+13.1-vec2(0.0,0.002))) / 0.004;
+    vec2 g3 = vec2(fbm(p*4.0+31.7+vec2(0.002,0.0)) - fbm(p*4.0+31.7-vec2(0.002,0.0)),
+                   fbm(p*4.0+31.7+vec2(0.0,0.002)) - fbm(p*4.0+31.7-vec2(0.0,0.002))) / 0.004;
+
+    vec2 curl = normalize(vec2(g1.y,-g1.x) + 0.6*vec2(g2.y,-g2.x) + 0.35*vec2(g3.y,-g3.x) + 1e-5);
+
+    float shear = abs(beltShear(uv, texel));        // eddies where shear is high
+    float latMask = smoothstep(0.10, 0.55, abs(lat)); // suppress messy eq
+    float noiseAmp = clamp( mix(0.08, 0.30, latMask) + 0.35*shear, 0.06, 0.55 );
+
+    // final flow (normalized direction, then scaled magnitude)
+    vec2 flowDir = normalize(zonal + curl * noiseAmp + 1e-5);
+    float flowMag = 0.18 + 0.22*latMask + 0.25*shear;
+    vec2 flow = flowDir * flowMag;
+
+    // turbulence channel for extra detail
+    float turb = fbm(uv*80.0 + flow*5.0);
+
+    imageStore(outImg, id, vec4(flow*0.5 + 0.5, baseBelt, turb));
+}
