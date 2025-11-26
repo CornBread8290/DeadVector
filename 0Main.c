@@ -417,15 +417,13 @@ static void gas_job(void *vp){
 static GLADapiproc APIENTRY glad_wgl_loader(const char* name) {
     return (GLADapiproc)wglGetProcAddress(name);
 }
-GLADapiproc APIENTRY glad_opengl_loader(const char* name) {
-    void* p = (void*)wglGetProcAddress(name);
-    if (!p || p == (void*)0x1 || p == (void*)0x2 || p == (void*)0x3 || p == (void*)-1) {
-        HMODULE module = LoadLibraryA("opengl32.dll");
-        p = (void*)GetProcAddress(module, name);
+GLADapiproc APIENTRY glad_opengl_loader(const char *name) {
+    GLADapiproc p = (GLADapiproc)wglGetProcAddress(name);
+    if (!p || (uintptr_t)p <= 3 || p == (GLADapiproc)-1) {
+        p = (GLADapiproc)GetProcAddress(GetModuleHandleA("opengl32.dll"), name);
     }
-    return (GLADapiproc)p;
+    return p;
 }
-
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
