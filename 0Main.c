@@ -328,6 +328,115 @@ void generate_gas_giant(Mesh* mesh, Vec3 center, float radius, int subdivisions)
     }
 }
 
+void create_spaceship(Mesh* m) {
+    mesh_clear(m);
+
+    // Main fuselage - compact fighter body
+    make_box(m, (Vec3){-0.25f, -0.2f, -1.2f}, (Vec3){0.25f, 0.2f, 1.2f});
+
+    // Taper nose
+    {
+        Mask nose = mask_box(m, (Vec3){-1.0f, -1.0f, 0.6f}, (Vec3){1.0f, 1.0f, 1.5f});
+        sel_scale(m, nose, (Vec3){0.0f, 0.0f, 1.2f}, (Vec3){0.25f, 0.25f, 1.0f});
+        free(nose);
+    }
+
+    // Cockpit bubble
+    {
+        Mesh cockpit_temp;
+        init_mesh(&cockpit_temp, 500, 2000);
+        make_cubesphere(&cockpit_temp, (Vec3){0.0f, 0.2f, 0.7f}, 0.2f, 1);
+
+        int base_vertex = m->vertex_count;
+        for(int i = 0; i < cockpit_temp.vertex_count; i++) {
+            add_vertex(m, cockpit_temp.vertices[i]);
+        }
+        for(int i = 0; i < cockpit_temp.index_count; i += 3) {
+            add_triangle(m,
+                base_vertex + cockpit_temp.indices[i],
+                base_vertex + cockpit_temp.indices[i+1],
+                base_vertex + cockpit_temp.indices[i+2]);
+        }
+        free(cockpit_temp.vertices);
+        free(cockpit_temp.indices);
+    }
+
+    {
+        Mask wing_base = mask_box(m, (Vec3){0.2f, -0.3f, -0.4f}, (Vec3){0.3f, -0.1f, 0.4f});
+
+        // First extrusion - main wing section
+        Mask wing_mid = sel_extrude_tris(m, wing_base, (Vec3){1.0f, 0.0f, 0.0f}, 0.8f, 1);
+        free(wing_base);
+
+        // Second extrusion - wing tip
+        Mask wing_tip_base = mask_box(m, (Vec3){0.9f, -0.4f, -0.5f}, (Vec3){1.2f, 0.1f, 0.5f});
+        Mask wing_tip = sel_extrude_tris(m, wing_tip_base, (Vec3){1.0f, 0.0f, -0.2f}, 0.5f, 1);
+        free(wing_tip_base);
+
+        // Taper the tip
+        Mask tip_taper = mask_box(m, (Vec3){1.4f, -1.0f, -1.0f}, (Vec3){2.0f, 1.0f, 1.0f});
+        sel_scale(m, tip_taper, (Vec3){1.6f, -0.15f, -0.3f}, (Vec3){1.0f, 0.4f, 0.5f});
+        free(tip_taper);
+
+        free(wing_mid);
+        free(wing_tip);
+
+        // Mirror entire wing assembly to left side
+        Mask all_right_wing = mask_box(m, (Vec3){0.2f, -1.0f, -2.0f}, (Vec3){2.0f, 1.0f, 1.0f});
+        Mask left_wing = sel_mirror(m, all_right_wing, (Vec3){1.0f, 0.0f, 0.0f}, 0.0f, 1);
+        free(all_right_wing);
+        free(left_wing);
+    }
+
+    // Engine pods on wings
+    {
+        Mesh engine;
+        init_mesh(&engine, 300, 1000);
+        make_prism(&engine, 8, 0.1f, 0.6f);
+
+        Mask all_eng = mask_all(&engine);
+        sel_rotate(&engine, all_eng, (Vec3){0,0,0}, (Vec3){0,1,0}, 90.0f * DEG2RAD);
+        sel_translate(&engine, all_eng, (Vec3){0.7f, -0.2f, 0.0f});
+        free(all_eng);
+
+        int base_vertex = m->vertex_count;
+        for(int i = 0; i < engine.vertex_count; i++) {
+            add_vertex(m, engine.vertices[i]);
+        }
+        for(int i = 0; i < engine.index_count; i += 3) {
+            add_triangle(m,
+                base_vertex + engine.indices[i],
+                base_vertex + engine.indices[i+1],
+                base_vertex + engine.indices[i+2]);
+        }
+
+        free(engine.vertices);
+        free(engine.indices);
+
+        // Mirror engine to left
+        Mask right_eng = mask_box(m, (Vec3){0.4f, -0.5f, -0.5f}, (Vec3){1.0f, 0.1f, 0.5f});
+        Mask left_eng = sel_mirror(m, right_eng, (Vec3){1.0f, 0.0f, 0.0f}, 0.0f, 1);
+        free(right_eng);
+        free(left_eng);
+    }
+
+    // Tail fin
+    {
+        Mask tail_base = mask_box(m, (Vec3){-0.1f, 0.15f, -0.8f}, (Vec3){0.1f, 0.2f, -0.3f});
+        Mask tail = sel_extrude_tris(m, tail_base, (Vec3){0.0f, 1.0f, 0.0f}, 0.4f, 1);
+        free(tail_base);
+
+        // Taper fin
+        Mask fin_top = mask_box(m, (Vec3){-0.5f, 0.5f, -1.0f}, (Vec3){0.5f, 1.0f, 0.5f});
+        sel_scale(m, fin_top, (Vec3){0.0f, 0.6f, -0.55f}, (Vec3){0.5f, 1.0f, 0.8f});
+        free(fin_top);
+
+        free(tail);
+    }
+
+    upload_mesh(m);
+}
+
 void set_common_matrices(ShaderProgram* shader, const float* view, const float* projection) {
     glUseProgram(shader->id);
     glUniformMatrix4fv(shader->u_view_loc, 1, GL_FALSE, view);
@@ -427,7 +536,8 @@ GLADapiproc APIENTRY glad_opengl_loader(const char *name) {
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+// ReSharper disable once CppDFAConstantFunctionResult
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
 
     // 1. Register and create window
     WNDCLASS wc = { 0 };
@@ -516,7 +626,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
 
-    ShowWindow(hWnd, nCmdShow);
+    ShowWindow(hWnd, nShowCmd);
     UpdateWindow(hWnd);
 
     Vec3 vel = {0.0f, 0.0f, 0.0f};
@@ -636,17 +746,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 
     //Ship
-    Mesh cockpit_mesh;
-    //init_mesh(&cockpit_mesh, 512, 2048);
+    Mesh spaceship;
+    spaceship.material_id = 2;
+    init_mesh(&spaceship, 10000, 30000);
+    create_spaceship(&spaceship);
 
-    Object cockpit = {
+    mesh_pool[3] = &spaceship;
+
+    Object ship = {
         .position = {0.0f, 0.0f, 0.0f},
         .rotation = {0.0f, 0.0f, 0.0f, 1.0f},
         .scale = {1.0f, 1.0f, 1.0f},
         .mesh_id = 3,
         .flags = OBJ_FLAG_VISIBLE,
     };
-        //make_box(&cockpit_mesh, (Vec3){-0.7f,-0.5f,-0.8f}, (Vec3){0.7f,0.5f,0.8f});
+
 
     //HUD
     hud_init_minimal();
@@ -792,8 +906,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         set_common_uniforms(&univ_shader, model, cview, projection, pos, light_dir, a_mat, a_flags);
         glPointSize(1.0f);
         draw_object(&asteroid, &univ_shader, mesh_pool, GL_TRIANGLES);
-        draw_object(&cockpit, &univ_shader, mesh_pool, GL_TRIANGLES);
-
+        draw_object(&ship, &univ_shader, mesh_pool, GL_TRIANGLES);
 
 
         glUseProgram(planet_shader.id);

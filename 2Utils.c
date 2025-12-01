@@ -43,15 +43,17 @@ float noise3f(Vec3 p) {
     Vec3 fp = { p.x - ip.x, p.y - ip.y, p.z - ip.z };
 
     float acc = 0.0f;
-    for (int dz = 0; dz <= 1; dz++)
-    for (int dy = 0; dy <= 1; dy++)
-    for (int dx = 0; dx <= 1; dx++) {
-        Vec3 corner = { ip.x + dx, ip.y + dy, ip.z + dz };
-        float val = hashf3(corner);
-        float wx = smoothstep(0, 1, dx ? fp.x : 1 - fp.x);
-        float wy = smoothstep(0, 1, dy ? fp.y : 1 - fp.y);
-        float wz = smoothstep(0, 1, dz ? fp.z : 1 - fp.z);
-        acc += val * wx * wy * wz;
+    for (int dz = 0; dz <= 1; dz++) {
+        for (int dy = 0; dy <= 1; dy++) {
+            for (int dx = 0; dx <= 1; dx++) {
+                Vec3 corner = { ip.x + dx, ip.y + dy, ip.z + dz };
+                float val = hashf3(corner);
+                float wx = smoothstep(0, 1, dx ? fp.x : 1 - fp.x);
+                float wy = smoothstep(0, 1, dy ? fp.y : 1 - fp.y);
+                float wz = smoothstep(0, 1, dz ? fp.z : 1 - fp.z);
+                acc += val * wx * wy * wz;
+            }
+        }
     }
     return acc;
 }
@@ -331,6 +333,20 @@ int find_or_add_vertex(Mesh* mesh, VertexFormat v) {
     return index;
 }
 
+int add_vertex(Mesh* mesh, VertexFormat v) {
+    ensure_v(mesh, 1);
+    int index = mesh->vertex_count++;
+    mesh->vertices[index] = v;
+    return index;
+}
+
+void add_triangle(Mesh* mesh, unsigned int i0, unsigned int i1, unsigned int i2) {
+    ensure_i(mesh, 3);
+    mesh->indices[mesh->index_count++] = i0;
+    mesh->indices[mesh->index_count++] = i1;
+    mesh->indices[mesh->index_count++] = i2;
+}
+
 void draw_mesh(Mesh* mesh, GLenum primitive_type) {
     if (!mesh || !mesh->vao || mesh->index_count == 0) return;
 
@@ -444,20 +460,21 @@ void draw_object(const Object* obj, const ShaderProgram* shader, Mesh* mesh_pool
 
 
 
-static void ensure_v(Mesh* m, int add){
+void ensure_v(Mesh* m, int add){
     int need = m->vertex_count + add;
     if (need > m->vertex_capacity){
         m->vertex_capacity = need*2 + 8;
         m->vertices = realloc(m->vertices, sizeof(VertexFormat)*m->vertex_capacity);
     }
 }
-static void ensure_i(Mesh* m, int add){
+void ensure_i(Mesh* m, int add){
     int need = m->index_count + add;
     if (need > m->index_capacity){
         m->index_capacity = need*2 + 8;
         m->indices = realloc(m->indices, sizeof(unsigned)*m->index_capacity);
     }
 }
+
 static Vec3 v3(float x,float y,float z){ return (Vec3){x,y,z}; }
 static Vec3 vadd(Vec3 a, Vec3 b){ return (Vec3){a.x+b.x,a.y+b.y,a.z+b.z}; }
 static Vec3 vsub(Vec3 a, Vec3 b){ return (Vec3){a.x-b.x,a.y-b.y,a.z-b.z}; }
@@ -519,7 +536,7 @@ void sel_scale(Mesh* m, Mask s, Vec3 pivot, Vec3 k){
         m->vertices[i].position=vadd(p,pivot);
     }
 }
-void sel_rotate(Mesh* m, Mask s, Vec3 pivot, Vec3 axis, float ang){
+void sel_rotate(Mesh* m, const Mask s, Vec3 pivot, Vec3 axis, float ang){
     Quat q=quat_axis_angle(axis.x,axis.y,axis.z,ang);
     for(int i=0;i<m->vertex_count;i++) if(s[i]){
         Vec3 p=vsub(m->vertices[i].position,pivot);
@@ -543,26 +560,42 @@ static Vec3 reflect(Vec3 p, Vec3 n, float d){
 }
 Mask sel_mirror(Mesh* m, const Mask s, const Vec3 n, const float d, const char duplicate){
     if(!duplicate){ for(int i=0;i<m->vertex_count;i++) if(s[i]) m->vertices[i].position=reflect(m->vertices[i].position,n,d); return NULL; }
-    int vc=m->vertex_count; int *map=(int*)malloc(sizeof(int)*vc); for(int i=0;i<vc;i++) map[i]=-1;
-    for(int i=0;i<vc;i++) if(s[i]){ ensure_v(m,1); map[i]=m->vertex_count++; m->vertices[map[i]]=m->vertices[i];
+
+    int vc=m->vertex_count;
+    int ic=m->index_count;
+
+    int *map=(int*)malloc(sizeof(int)*vc);
+    for(int i=0;i<vc;i++) map[i]=-1;
+
+    for(int i=0;i<vc;i++) if(s[i]){
+        ensure_v(m,1);
+        map[i]=m->vertex_count++;
+        m->vertices[map[i]]=m->vertices[i];
         m->vertices[map[i]].position=reflect(m->vertices[i].position,n,d);
         m->vertices[map[i]].normal=vec3_normalize(reflect(m->vertices[i].normal,n,0));
     }
-    for(int i=0;i<m->index_count;i+=3){
+
+    for(int i=0;i<ic;i+=3){
         unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
-        if(s[a]&&s[b]&&s[c]){ ensure_i(m,3);
+        if(s[a]&&s[b]&&s[c]){
+            ensure_i(m,3);
             m->indices[m->index_count++]=(unsigned)map[a];
             m->indices[m->index_count++]=(unsigned)map[c];
             m->indices[m->index_count++]=(unsigned)map[b];
         }
     }
+
     Mask out=(Mask)calloc((size_t)m->vertex_count,1);
     for(int i=0;i<vc;i++) if(map[i]>=0) out[map[i]]=1;
-    free(map); return out;
+    free(map);
+    return out;
 }
 Mask sel_extrude_tris(Mesh* m, Mask s, Vec3 dir, float dist, int keep_base){
     int vc=m->vertex_count, ic=m->index_count;
-    int *map=(int*)malloc(sizeof(int)*vc); for(int i=0;i<vc;i++) map[i]=-1;
+    int *map=(int*)malloc(sizeof(int)*vc);
+    for(int i=0;i<vc;i++) map[i]=-1;
+
+    // Create extruded vertices
     for(int i=0;i<ic;i+=3){
         unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
         if(!(s[a]||s[b]||s[c])) continue;
@@ -570,23 +603,56 @@ Mask sel_extrude_tris(Mesh* m, Mask s, Vec3 dir, float dist, int keep_base){
         if(map[b]<0){ ensure_v(m,1); map[b]=m->vertex_count++; m->vertices[map[b]]=m->vertices[b]; m->vertices[map[b]].position=vmad(m->vertices[b].position,dir,dist); }
         if(map[c]<0){ ensure_v(m,1); map[c]=m->vertex_count++; m->vertices[map[c]]=m->vertices[c]; m->vertices[map[c]].position=vmad(m->vertices[c].position,dir,dist); }
     }
+
+    int new_index_start = m->index_count;
     for(int i=0;i<ic;i+=3){
         unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
         if(!(s[a]&&s[b]&&s[c])) continue;
+
         unsigned na=(unsigned)map[a], nb=(unsigned)map[b], nc=(unsigned)map[c];
-        ensure_i(m,3); m->indices[m->index_count++]=na; m->indices[m->index_count++]=nb; m->indices[m->index_count++]=nc;
-        ensure_i(m,6); m->indices[m->index_count++]=a; m->indices[m->index_count++]=b; m->indices[m->index_count++]=nb;
-                       m->indices[m->index_count++]=a; m->indices[m->index_count++]=nb; m->indices[m->index_count++]=na;
-        ensure_i(m,6); m->indices[m->index_count++]=b; m->indices[m->index_count++]=c; m->indices[m->index_count++]=nc;
-                       m->indices[m->index_count++]=b; m->indices[m->index_count++]=nc; m->indices[m->index_count++]=nb;
-        ensure_i(m,6); m->indices[m->index_count++]=c; m->indices[m->index_count++]=a; m->indices[m->index_count++]=na;
-                       m->indices[m->index_count++]=c; m->indices[m->index_count++]=na; m->indices[m->index_count++]=nc;
-        if(!keep_base) m->indices[i]=m->indices[i+1]=m->indices[i+2]=a;
+
+        // Top face
+        ensure_i(m,15);
+        m->indices[m->index_count++]=na;
+        m->indices[m->index_count++]=nb;
+        m->indices[m->index_count++]=nc;
+
+        // Side faces
+        m->indices[m->index_count++]=a; m->indices[m->index_count++]=b; m->indices[m->index_count++]=nb;
+        m->indices[m->index_count++]=a; m->indices[m->index_count++]=nb; m->indices[m->index_count++]=na;
+
+        m->indices[m->index_count++]=b; m->indices[m->index_count++]=c; m->indices[m->index_count++]=nc;
+        m->indices[m->index_count++]=b; m->indices[m->index_count++]=nc; m->indices[m->index_count++]=nb;
+
+        m->indices[m->index_count++]=c; m->indices[m->index_count++]=a; m->indices[m->index_count++]=na;
+        m->indices[m->index_count++]=c; m->indices[m->index_count++]=na; m->indices[m->index_count++]=nc;
     }
+
+    // Remove base triangles if requested
+    if(!keep_base) {
+        int write = 0;
+        for(int read=0; read<ic; read+=3){
+            unsigned a=m->indices[read],b=m->indices[read+1],c=m->indices[read+2];
+            // Keep triangles that are NOT fully selected
+            if(!(s[a]&&s[b]&&s[c])) {
+                m->indices[write++]=a;
+                m->indices[write++]=b;
+                m->indices[write++]=c;
+            }
+        }
+        for(int i=new_index_start; i<m->index_count; i++) {
+            m->indices[write++] = m->indices[i];
+        }
+        m->index_count = write;
+    }
+
+    // Set normals for extruded vertices
     for(int i=0;i<vc;i++) if(map[i]>=0) m->vertices[map[i]].normal=vec3_normalize(dir);
+
     Mask out=(Mask)calloc((size_t)m->vertex_count,1);
     for(int i=0;i<vc;i++) if(map[i]>=0) out[map[i]]=1;
-    free(map); return out;
+    free(map);
+    return out;
 }
 int assign_submesh_from_mask(Mesh* m, Mask s, unsigned material_id){
     if(!m || !m->indices || !s) return -1;
@@ -661,13 +727,15 @@ void make_prism(Mesh* m, int sides, float r, float h){
 void make_cubesphere(Mesh* m, Vec3 center, float r, int subdivs){
     if(subdivs<1) subdivs=1;
     mesh_clear(m);
-    int faces=6, N=subdivs+1;
+    const int faces=6;
+    const int N=subdivs+1;
     ensure_v(m, faces*N*N); ensure_i(m, faces*subdivs*subdivs*6);
     Vec3 normals[6]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
     Color4 white={1,1,1,1}; UV zuv={0,0};
     float step=2.0f/subdivs;
     for(int f=0;f<6;f++){
-        Vec3 n=normals[f], ax=v3(0,0,0), ay=v3(0,0,0);
+        const Vec3 n=normals[f];
+        Vec3 ax=v3(0,0,0), ay=v3(0,0,0);
         if(f==0||f==1){ ax.z=1; ay.y=1; } else if(f==2||f==3){ ax.x=1; ay.z=1; } else { ax.x=1; ay.y=1; }
         int idx[N][N];
         for(int i=0;i<=subdivs;i++){
@@ -702,8 +770,8 @@ void make_icosahedron_sphere(Mesh* m, Vec3 c, float r){
         7,10,3, 7,6,10, 7,11,6, 11,0,6, 0,1,6,
         6,1,10, 9,0,11, 9,11,2, 9,2,5, 7,2,11
     };
-    Color4 white={1,1,1,1}; UV zuv={0,0};
     ensure_v(m,12); ensure_i(m,60);
+    const Color4 white={1,1,1,1}; const UV zuv={0,0};
     int base=m->vertex_count;
     for(int i=0;i<12;i++){
         Vec3 d=vec3_normalize(V[i]);

@@ -111,6 +111,10 @@ typedef struct {
 
 // selections
 typedef unsigned char* Mask;
+
+void ensure_v(Mesh* m, int add);
+void ensure_i(Mesh* m, int add);
+
 Mask mask_all(const Mesh* m);
 Mask mask_box(const Mesh* m, Vec3 mn, Vec3 mx);
 Mask mask_sphere(const Mesh* m, Vec3 c, float r);
@@ -119,7 +123,7 @@ int  mask_count(const Mesh* m, const Mask s);
 // transforms
 void sel_translate(Mesh* m, Mask s, Vec3 d);
 void sel_scale(Mesh* m, Mask s, Vec3 pivot, Vec3 k);
-void sel_rotate(Mesh* m, Mask s, Vec3 pivot, Vec3 axis, float ang);
+void sel_rotate(Mesh* m, const Mask s, Vec3 pivot, Vec3 axis, float ang);
 
 // mirrors & extrusion
 Mask sel_mirror(Mesh* m, Mask s, Vec3 n, float d, char duplicate);
@@ -192,6 +196,8 @@ void quat_to_matrix(const Quat* q, Mat4 m);
 void init_mesh(Mesh* mesh, int vertex_capacity, int index_capacity);
 void draw_mesh(Mesh* mesh, GLenum primitive_type);
 int find_or_add_vertex(Mesh* mesh, VertexFormat v);
+int add_vertex(Mesh* mesh, VertexFormat v);
+void add_triangle(Mesh* mesh, unsigned int i0, unsigned int i1, unsigned int i2);
 void upload_mesh(Mesh* mesh);
 void draw_object(const Object* obj, const ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type);
 

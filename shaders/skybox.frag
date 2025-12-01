@@ -11,17 +11,13 @@ const float CENTER_SIGMA   = 0.30;   // tighter bright core
 const float GLOW_STRENGTH  = 1.45;   // overall Milky Way glow
 const float STAR_STRENGTH  = 5.00;   // small stars intensity
 const float SCATTER_STRENGTH = 0.22; // sparse polar sparkle
-const float TWINKLE        = 0.25;   // small random flicker
 const float TIME           = 0.0;    // no app-driven time; keep static
 
 const float NOISE_SCALE_LON = 4.0;
 
-// Improved stars (bigger/softer without loops)
-const float STAR_FREQ0   = 200.0;    // was 320.0
-const float STAR_FREQ1   = 140.0;    // was 220.0
-const float THRESH_A0    = 0.970;    // was 0.985
-const float THRESH_B0    = 0.985;    // was 0.992
-const float THRESH_C0    = 0.992;    // was 0.997
+// Simple star frequencies
+const float STAR_FREQ0   = 200.0;
+const float STAR_FREQ1   = 140.0;
 
 float hash11(float n){ return fract(sin(n)*43758.5453123); }
 float hash21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
@@ -50,6 +46,7 @@ vec3 starColor(float t){
 void main(){
     vec3 dir = normalize(v_direction);
 
+    // Safe basis
     vec3 Z = normalize(G_POLE);
     vec3 C = normalize(G_CENTER);
     vec3 X = C - dot(C, Z)*Z;
@@ -70,17 +67,19 @@ void main(){
     float s2   = max(BAND_SIGMA*BAND_SIGMA, 1e-5);
     float band = exp(-0.5 * (lat*lat) / s2);
 
+    // Core bulge (Gaussian in longitude)
     float c2    = max(CENTER_SIGMA*CENTER_SIGMA, 1e-5);
     float bulge = exp(-0.5 * (lon*lon) / c2);
 
+    // Dust/texture along the band (unchanged)
     vec2 galUV = vec2(lon * NOISE_SCALE_LON, lat / max(BAND_SIGMA, 1e-3));
     float dust = fbm(galUV*1.7 + vec2(0.0, 0.3*TIME))
-               * 0.6 + 0.4*fbm(galUV*3.3 - vec2(0.2*TIME, 0.0));
+    * 0.6 + 0.4*fbm(galUV*3.3 - vec2(0.2*TIME, 0.0));
     float dustMask = smoothstep(0.25, 0.95, dust);
 
     // Band glow
     float glow = GLOW_STRENGTH * band * mix(0.55, 1.35, bulge) * dustMask
-                / (0.9 + 1.0 - max(0.0, dot(dir, X)))*1.0;
+    / (0.9 + 1.0 - max(0.0, dot(dir, X)))*1.0;
 
     // Base sky
     vec3 col = vec3(0.005, 0.008, 0.012);
@@ -89,18 +88,18 @@ void main(){
     vec3 bandColor = mix(vec3(0.6,0.75,1.0), vec3(1.0,0.93,0.85), hueT);
     col += bandColor * glow;
 
-    float densityBoost = 0.35 + 0.65 * mix(0.3, 1.0, bulge) * mix(0.4, 1.0, band);
-    vec2 s0 = vec2(lon * cos(lat), lat) * STAR_FREQ0;
-    vec2 s1 = vec2((lon * cos(lat))*1.7, lat) * STAR_FREQ1; // keep variety
-    float starField =
-        smoothstep(THRESH_A0, 1.0, vnoise(s0 + 7.1)) +
-        0.7 * smoothstep(THRESH_B0, 1.0, vnoise(s1 + 3.7)) +
-        0.4 * smoothstep(THRESH_C0, 1.0, vnoise(s0*1.7 - 4.2));
+    float density = 0.35 + 0.65 * (0.4*band + 0.6*bulge);
 
-    float tw = 1.0 + TWINKLE * (hash31(dir*137.0 + TIME)*2.0 - 1.0);
-    float starI = STAR_STRENGTH * starField * densityBoost * tw;
+    vec2 starUV = vec2(lon * cos(lat), lat);
+    float n0 = vnoise(starUV * STAR_FREQ0 + 7.1);
+    float n1 = vnoise(starUV * STAR_FREQ1 - 3.7);
+    float n  = max(n0, n1);
 
-    float cSeed = hash11(floor((lon+3.14159)*57.0) + 31.0*floor((lat+1.5708)*19.0));
+    // soft mask gives slightly larger, softer stars
+    float starMask = smoothstep(0.96, 0.999, n);
+    float starI = STAR_STRENGTH * starMask * density;
+
+    float cSeed = hash11(floor(starUV.x*97.0) + 37.0*floor(starUV.y*59.0));
     vec3  starCol = starColor(cSeed);
     col += starCol * starI;
 
