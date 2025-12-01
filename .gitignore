@@ -58,3 +58,4 @@ build/.cmake/api/v1/reply/target-ALL_BUILD-MinSizeRel-2d7a3f3441b41e15165b.json
 build/.cmake/api/v1/reply/target-ALL_BUILD-Debug-2d7a3f3441b41e15165b.json
 build/.cmake/api/v1/reply/index-2025-11-26T21-20-37-0260.json
 build/.cmake/api/v1/reply/codemodel-v2-c3fdb822c81c01ccd942.json
+*.xml
