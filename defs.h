@@ -126,7 +126,7 @@ void sel_scale(Mesh* m, Mask s, Vec3 pivot, Vec3 k);
 void sel_rotate(Mesh* m, const Mask s, Vec3 pivot, Vec3 axis, float ang);
 
 // mirrors & extrusion
-Mask sel_mirror(Mesh* m, Mask s, Vec3 n, float d, char duplicate);
+Mask sel_mirror(Mesh* m, const Mask s, Vec3 n, float d, char duplicate);
 Mask sel_extrude_tris(Mesh* m, Mask s, Vec3 dir, float dist, int keep_base);
 
 // submesh

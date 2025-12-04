@@ -558,38 +558,66 @@ static Vec3 reflect(Vec3 p, Vec3 n, float d){
     float t=(n.x*p.x+n.y*p.y+n.z*p.z+d)*2.0f;
     return (Vec3){p.x-n.x*t,p.y-n.y*t,p.z-n.z*t};
 }
-Mask sel_mirror(Mesh* m, const Mask s, const Vec3 n, const float d, const char duplicate){
-    if(!duplicate){ for(int i=0;i<m->vertex_count;i++) if(s[i]) m->vertices[i].position=reflect(m->vertices[i].position,n,d); return NULL; }
 
-    int vc=m->vertex_count;
-    int ic=m->index_count;
+Mask sel_mirror(Mesh* m, const Mask s, Vec3 n, float d, char duplicate){
+    int i;
 
-    int *map=(int*)malloc(sizeof(int)*vc);
-    for(int i=0;i<vc;i++) map[i]=-1;
-
-    for(int i=0;i<vc;i++) if(s[i]){
-        ensure_v(m,1);
-        map[i]=m->vertex_count++;
-        m->vertices[map[i]]=m->vertices[i];
-        m->vertices[map[i]].position=reflect(m->vertices[i].position,n,d);
-        m->vertices[map[i]].normal=vec3_normalize(reflect(m->vertices[i].normal,n,0));
+    if (!duplicate) {
+        if (s) {
+            for (i = 0; i < m->vertex_count; ++i)
+                if (s[i])
+                    m->vertices[i].position = reflect(m->vertices[i].position, n, d);
+        } else {
+            for (i = 0; i < m->vertex_count; ++i)
+                m->vertices[i].position = reflect(m->vertices[i].position, n, d);
+        }
+        return NULL;
     }
 
-    for(int i=0;i<ic;i+=3){
-        unsigned a=m->indices[i],b=m->indices[i+1],c=m->indices[i+2];
-        if(s[a]&&s[b]&&s[c]){
-            ensure_i(m,3);
-            m->indices[m->index_count++]=(unsigned)map[a];
-            m->indices[m->index_count++]=(unsigned)map[c];
-            m->indices[m->index_count++]=(unsigned)map[b];
+    const int vc = m->vertex_count;
+    const int ic = m->index_count;
+    const int all = (s == NULL);
+
+    int *map = (int*)malloc(sizeof(int) * vc);
+    for (i = 0; i < vc; ++i) map[i] = -1;
+
+    for (i = 0; i < vc; ++i) if (all || s[i]) {
+        ensure_v(m, 1);
+        map[i] = m->vertex_count++;
+        m->vertices[map[i]] = m->vertices[i];
+        m->vertices[map[i]].position = reflect(m->vertices[i].position, n, d);
+        m->vertices[map[i]].normal   = vec3_normalize(reflect(m->vertices[i].normal, n, 0));
+    }
+
+    for (i = 0; i < ic; i += 3) {
+        unsigned a = m->indices[i], b = m->indices[i+1], c = m->indices[i+2];
+
+        if (all || s[a] || s[b] || s[c]) {
+            ensure_i(m, 3);
+
+            unsigned na = (all || s[a]) ? (unsigned)map[a] : a;
+            unsigned nb = (all || s[b]) ? (unsigned)map[b] : b;
+            unsigned nc = (all || s[c]) ? (unsigned)map[c] : c;
+
+            m->indices[m->index_count++] = na;
+            m->indices[m->index_count++] = nc;  // mirrored winding
+            m->indices[m->index_count++] = nb;
         }
     }
 
-    Mask out=(Mask)calloc((size_t)m->vertex_count,1);
-    for(int i=0;i<vc;i++) if(map[i]>=0) out[map[i]]=1;
+    Mask out = (Mask)calloc((size_t)m->vertex_count, 1);
+    for (i = 0; i < vc; ++i)
+        if (map[i] >= 0)
+            out[map[i]] = 1;
+
     free(map);
     return out;
 }
+
+
+
+
+
 Mask sel_extrude_tris(Mesh* m, Mask s, Vec3 dir, float dist, int keep_base){
     int vc=m->vertex_count, ic=m->index_count;
     int *map=(int*)malloc(sizeof(int)*vc);
