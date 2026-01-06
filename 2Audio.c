@@ -1,5 +1,6 @@
 #include <windows.h>
-#include "defs.h"
+#include "3utils.h"
+#include "2Audio.h"
 
 #define NUM_CHANNELS 2
 #define BITS_PER_SAMPLE 16
@@ -8,8 +9,6 @@
 
 #define MAX_CHANNELS 64
 
-
-static float dir0;
 
 typedef struct {
     HWAVEOUT hWaveOut;

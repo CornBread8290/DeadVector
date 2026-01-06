@@ -1,4 +1,5 @@
 #include "defs.h"
+#include "4Font.h"
 
 #define FONT_FIRST 32         
 #define FONT_COUNT 96    
@@ -665,7 +666,8 @@ void hud_clear(void){
 }
 
 void hud_draw_string(int x, int y, const char* s){
-    if (!hud_buf || !s) return;
+    if (!hud_buf) return;
+    if (!s) hud_clear();
     font_draw_text(hud_buf, hud_w, x, y, s);
     hud_dirty = 1;
 }

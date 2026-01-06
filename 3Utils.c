@@ -1,4 +1,4 @@
-#include "defs.h"
+#include "3utils.h"
 #include <time.h>
 static uint32_t seed = 12355;
 #define EPSILON 0.0001f
@@ -374,89 +374,82 @@ void upload_mesh(Mesh* mesh) {
     GLsizei stride = sizeof(VertexFormat);
     size_t offset = 0;
 
-    glEnableVertexAttribArray(0); // position
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(Vec3);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0,3,GL_FLOAT,0,stride,(void*)0);
+    offset=sizeof(Vec3);
 
-    glEnableVertexAttribArray(1); // normal
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(Vec3);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1,3,GL_FLOAT,0,stride,(void*)offset);
+    offset+=sizeof(Vec3);
 
-    glEnableVertexAttribArray(3); // color
-    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(Color4);
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2,4,GL_FLOAT,0,stride,(void*)offset);
+    offset+=sizeof(Color4);
 
-    glEnableVertexAttribArray(4); // uv
-    glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, stride, (void*)offset);
-    offset += sizeof(UV);
-
-    glDisableVertexAttribArray(2); // tangent
-    glDisableVertexAttribArray(5); // roughness
-    glDisableVertexAttribArray(6); // metallic
-    glDisableVertexAttribArray(7); // emissive
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3,2,GL_FLOAT,0,stride,(void*)offset);
+    //offset += sizeof(UV);
 
     glBindVertexArray(0);
 }
 
-void draw_object(const Object* obj, const ShaderProgram* shader, Mesh* mesh_pool[], const GLenum primitive_type) {
+static inline const Material* get_mat(int id){
+    static const Material defm = { .albedo={1,1,1,1}, .roughness=1, .metallic=0, .emissiveF0=0 };
+    if(id < 0 || id >= MAX_MATERIALS) return &defm;
+    const Material* m = material_pool[id];
+    return m ? m : &defm;
+}
 
-    const Mesh* mesh = mesh_pool[obj->mesh_id];
-    if (!mesh || !(obj->flags & OBJ_FLAG_VISIBLE)) return;
+static inline void apply_mat(const ShaderProgram* sh, const Mesh* mesh, const Material* m){
+    if(sh->u_flags_loc!=-1) glUniform1i(sh->u_flags_loc, (GLint)(mesh->flags | m->flags));
+    if(sh->u_material_albedo_loc!=-1)    glUniform4f(sh->u_material_albedo_loc,    m->albedo.r,m->albedo.g,m->albedo.b,m->albedo.a);
+    if(sh->u_material_roughness_loc!=-1) glUniform1f(sh->u_material_roughness_loc, m->roughness);
+    if(sh->u_material_metallic_loc!=-1)  glUniform1f(sh->u_material_metallic_loc,  m->metallic);
+    if(sh->u_material_emissive_loc!=-1)  glUniform1f(sh->u_material_emissive_loc,  m->emissiveF0);
+}
 
-    Mat4 model, trans, rot, scale, trs;
-    mat4_identity(model);
-    mat4_identity(trans);
-    mat4_translate(trans, obj->position.x, obj->position.y, obj->position.z);
-    quat_to_matrix(&obj->rotation, rot);
-    mat4_identity(scale);
-    mat4_scale(scale, obj->scale.x, obj->scale.y, obj->scale.z);
-    mat4_multiply(trs, rot, scale);
-    mat4_multiply(model, trans, trs);
-    glUniformMatrix4fv(shader->u_model_loc, 1, GL_FALSE, model);
+void draw_object(const Object* o, const ShaderProgram* sh, Mesh* pool[], GLenum prim){
+    glUseProgram(sh->id);
+    const Mesh* mesh = pool[o->mesh_id];
+    if(!mesh || !(o->flags & OBJ_FLAG_VISIBLE)) return;
 
-    if (mesh->submesh_count <= 0) {
-        const Material* mat = material_pool[(unsigned)mesh->material_id];
-        if (mat) {
-            glUniform4f(shader->u_material_albedo_loc,    mat->albedo.r, mat->albedo.g, mat->albedo.b, mat->albedo.a);
-            glUniform1f(shader->u_material_roughness_loc, mat->roughness);
-            glUniform1f(shader->u_material_metallic_loc,  mat->metallic);
-            glUniform1f(shader->u_material_emissive_loc,  mat->emissive);
-        }
-        draw_mesh((Mesh*)mesh, primitive_type);
+    Mat4 T,R,S,M,TR;
+    mat4_identity(T); mat4_translate(T,o->position.x,o->position.y,o->position.z);
+    quat_to_matrix(&o->rotation,R);
+    mat4_identity(S); mat4_scale(S,o->scale.x,o->scale.y,o->scale.z);
+    mat4_multiply(TR,R,S);
+    mat4_multiply(M,T,TR);
+    if(sh->u_model_loc!=-1) glUniformMatrix4fv(sh->u_model_loc,1,GL_FALSE,M);
+
+    glBindVertexArray(mesh->vao);
+
+    if(mesh->submesh_count<=0){
+        const Material* m = get_mat(mesh->material_id);
+        apply_mat(sh, mesh, m);
+        glDrawElements(prim, mesh->index_count, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
         return;
     }
 
-    glBindVertexArray(mesh->vao);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    for (int pass = 0; pass < 2; ++pass) {
-        const int transp = (pass == 1);
+    for(int pass=0; pass<2; pass++){
+        int transp = (pass==1);
         glDepthMask(transp ? GL_FALSE : GL_TRUE);
-        if (transp) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+        if(transp) glEnable(GL_BLEND); else glDisable(GL_BLEND);
 
-        for (int i = 0; i < mesh->submesh_count; ++i) {
+        for(int i=0;i<mesh->submesh_count;i++){
             const SubMesh* s = &mesh->submeshes[i];
-            const Material* mat = material_pool[s->material_id];
-            if (!mat) continue;
-
-            const int isT = (mat->albedo.a < 0.999f);
-            if (isT != transp) continue;
-
-            glUniform4f(shader->u_material_albedo_loc,    mat->albedo.r, mat->albedo.g, mat->albedo.b, mat->albedo.a);
-            glUniform1f(shader->u_material_roughness_loc, mat->roughness);
-            glUniform1f(shader->u_material_metallic_loc,  mat->metallic);
-            glUniform1f(shader->u_material_emissive_loc,  mat->emissive);
-
-            glDrawElements(primitive_type, s->index_count, GL_UNSIGNED_INT,
-                           (void*)(sizeof(unsigned) * s->index_offset));
+            const Material* m = get_mat((int)s->material_id);
+            if(((m->albedo.a < 0.999f) != transp)) continue;
+            apply_mat(sh, mesh, m);
+            glDrawElements(prim, s->index_count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned)*s->index_offset));
         }
     }
 
     glDepthMask(GL_TRUE);
     glBindVertexArray(0);
-
 }
-
 
 
 
