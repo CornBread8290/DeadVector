@@ -88,7 +88,7 @@ Vec3 vel = {0};      // Ship linear velocity
 Vec3 angVel = {0};   // Ship angular velocity (radians/sec)
 Quat rot = {0, 0, 0, 1}; // Ship orientation
 Vec2 view = {0, 0};  // Head pitch/yaw in radians
-float dt = 0.016f;   // Frame time (roughly 60fps)
+float dt = 0.016f;
 
 
 float RF = 0.0f;
@@ -922,13 +922,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         //glDisable(GL_DEPTH_TEST);
 
         char fpschar[16];
-        unsigned fps;
-        unsigned ffps = (unsigned )(1.0f / dt) + 1000;
-        if (ffps > fps) fps = ffps;
+        //unsigned fps = fps > (unsigned)(1.0f / dt) ? fps : (unsigned)(1.0f / dt);
+        unsigned fps = (unsigned )(1.0f / dt);
 
-        int p = 0;
-        fpschar[p++] = 'F'; fpschar[p++] = 'P'; fpschar[p++] = 'S'; fpschar[p++] = ':'; fpschar[p++] = ' ';
-        p += u32_to_str(fpschar + p, fps);
+        *(unsigned*)fpschar = 0x20535046; //FPS
+        fpschar[4] = ':'; fpschar[5] = ' ';
+        u32_to_str(fpschar + 6, fps);
 
         if (frame == 0){
             hud_clear();

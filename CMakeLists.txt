@@ -27,6 +27,7 @@ target_compile_options(Dead_Vector_2 PRIVATE
         -fno-stack-protector
         -fno-ident
         -flto
+        -fstack-usage
         >
 )
 

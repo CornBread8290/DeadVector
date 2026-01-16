@@ -692,14 +692,14 @@ void hud_init_minimal(void){
     if (!hud_buf) hud_buf = (unsigned char*)calloc((size_t)hud_w * (size_t)hud_h, 1);
 
     const float verts[] = {
-        // x, y,  u, v
-         0, 0,   0, 0,
-         1, 0,   1, 0,
-         1, 1,   1, 1,
-         0, 0,   0, 0,
-         1, 1,   1, 1,
-         0, 1,   0, 1,
-    };
+        0, 0,   0, 0,
+        1, 1,   1, 1,
+        1, 0,   1, 0,
+
+        0, 0,   0, 0,
+        0, 1,   0, 1,
+        1, 1,   1, 1,
+   };
     glGenVertexArrays(1, &hud_vao);
     glGenBuffers(1, &hud_vbo);
     glBindVertexArray(hud_vao);
