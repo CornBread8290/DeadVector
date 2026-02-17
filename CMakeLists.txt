@@ -5,16 +5,47 @@ set(CMAKE_C_STANDARD 11)
 
 # Sources
 set(SRCS
-        0Main.c 2Audio.c 3Utils.c 4Font.c
+        0Main.c 2Audio.c 3Utils.c 4Font.c 5Speech.c 6Volume.c 7Physics.c 8Mesh.c
         gl.c wgl.c
-        1Mesh.c
-        1Mesh.h
 )
 
 # WIN32 removes the console window like -mwindows
-add_executable(Dead_Vector_2 WIN32 ${SRCS}
-        1Mesh.c
-        1Mesh.h)
+add_executable(Dead_Vector_2 WIN32 ${SRCS})
+
+file(GLOB SHADER_SOURCES CONFIGURE_DEPENDS
+        ${CMAKE_SOURCE_DIR}/shaders/*.vert
+        ${CMAKE_SOURCE_DIR}/shaders/*.frag
+        ${CMAKE_SOURCE_DIR}/shaders/*.comp
+)
+
+set(SHADER_HEADER ${CMAKE_BINARY_DIR}/generated/shaders_embed.h)
+add_custom_command(
+        OUTPUT ${SHADER_HEADER}
+        COMMAND ${CMAKE_COMMAND}
+        -DSHADER_DIR=${CMAKE_SOURCE_DIR}/shaders
+        -DOUT_FILE=${SHADER_HEADER}
+        -P ${CMAKE_SOURCE_DIR}/cmake/gen_shaders.cmake
+        DEPENDS ${SHADER_SOURCES} ${CMAKE_SOURCE_DIR}/cmake/gen_shaders.cmake
+        COMMENT "Baking shaders into shaders_embed.h"
+        VERBATIM
+)
+add_custom_target(shaders_embed DEPENDS ${SHADER_HEADER})
+add_dependencies(Dead_Vector_2 shaders_embed)
+
+target_include_directories(Dead_Vector_2 PRIVATE ${CMAKE_BINARY_DIR}/generated)
+target_compile_definitions(Dead_Vector_2 PRIVATE $<$<CONFIG:Release>:EMBED_SHADERS>)
+
+add_custom_command(TARGET Dead_Vector_2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E $<IF:$<CONFIG:Release>,true,copy_directory>
+        $<$<NOT:$<CONFIG:Release>>:${CMAKE_SOURCE_DIR}/shaders>
+        $<$<NOT:$<CONFIG:Release>>:$<TARGET_FILE_DIR:Dead_Vector_2>/shaders>
+        COMMENT "Staging shaders next to the executable (non-Release)"
+        VERBATIM
+)
+
+target_link_options(Dead_Vector_2 PRIVATE
+        $<$<CONFIG:Release>:-Wl,-Map=deadvec.map>
+)
 
 target_include_directories(Dead_Vector_2 PRIVATE ${CMAKE_SOURCE_DIR}/include)
 

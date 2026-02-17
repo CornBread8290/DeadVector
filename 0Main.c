@@ -13,7 +13,23 @@ HDC hDC;   // Device Context
 HWND hWnd; // Window Handle
 static int win_w = 800, win_h = 600;
 
+#ifdef EMBED_SHADERS
+#include <string.h>
+#include "shaders_embed.h"
+#endif
+
+static void shader_log(const char* what, const char* who, const char* detail) {
+    FILE* f = fopen("shader_error.txt", "a");
+    if (!f) return;
+    fprintf(f, "%s %s\n%s\n", what, who, detail);
+    fclose(f);
+}
+
 GLuint compile_shader_from_file(const char* filepath, GLenum shader_type) {
+#ifdef EMBED_SHADERS
+    const char* source = embedded_shader_source(filepath);
+    if (!source) return 0;
+#else
     FILE* file = fopen(filepath, "rb");
 
     fseek(file, 0, SEEK_END);
@@ -25,17 +41,20 @@ GLuint compile_shader_from_file(const char* filepath, GLenum shader_type) {
     fread(source, 1, (size_t)length, file);
     source[length] = '\0';
     fclose(file);
+#endif
 
     const GLuint shader = glCreateShader(shader_type);
     glShaderSource(shader, 1, (const char* const*)&source, NULL);
     glCompileShader(shader);
+#ifndef EMBED_SHADERS
     free(source);
+#endif
 
     GLint ok = GL_FALSE;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
     if (!ok) {
         GLint logLen = 0; glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLen);
-        if (logLen > 1) { char* log = (char*)malloc(logLen); glGetShaderInfoLog(shader, logLen, NULL, log); fprintf(stderr, "SHADER COMPILE FAIL %s:\n%s\n", filepath, log); free(log); }
+        if (logLen > 1) { char* log = (char*)malloc(logLen); glGetShaderInfoLog(shader, logLen, NULL, log); fprintf(stderr, "SHADER COMPILE FAIL %s:\n%s\n", filepath, log); shader_log("SHADER COMPILE FAIL", filepath, log); free(log); }
         glDeleteShader(shader);
         return 0;
     }
@@ -53,22 +72,44 @@ ShaderProgram create_shader_program_from_files(const char* vert_path, const char
 
     GLint linked;
     glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        GLint logLen = 0; glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &logLen);
+        if (logLen > 1) { char* log = (char*)malloc(logLen); glGetProgramInfoLog(prog, logLen, NULL, log); fprintf(stderr, "PROGRAM LINK FAIL %s + %s:\n%s\n", vert_path, frag_path, log); shader_log("PROGRAM LINK FAIL", frag_path, log); free(log); }
+    }
 
     glDeleteShader(vs);
     glDeleteShader(fs);
 
-    ShaderProgram sp = {
-        .id = prog,
-        .u_model_loc = glGetUniformLocation(prog, "u_model"),
-        .u_view_loc = glGetUniformLocation(prog, "u_view"),
-        .u_projection_loc = glGetUniformLocation(prog, "u_projection"),
-        .u_light_space_matrix_loc = glGetUniformLocation(prog, "u_light_space_matrix"),
-        .u_material_albedo_loc = glGetUniformLocation(prog, "u_material_albedo"),
-        .u_material_roughness_loc = glGetUniformLocation(prog, "u_material_roughness"),
-        .u_material_metallic_loc = glGetUniformLocation(prog, "u_material_metallic"),
-        .u_material_emissive_loc = glGetUniformLocation(prog, "u_material_emissive"),
-        .u_flags_loc = glGetUniformLocation(prog, "u_flags")
-    };
+    ShaderProgram sp = {0};
+    sp.id = prog;
+    sp.u_model_loc = glGetUniformLocation(prog, "u_model");
+    sp.u_view_loc = glGetUniformLocation(prog, "u_view");
+    sp.u_projection_loc = glGetUniformLocation(prog, "u_projection");
+    sp.u_light_space_matrix_loc = glGetUniformLocation(prog, "u_light_space_matrix");
+    sp.u_material_albedo_loc = glGetUniformLocation(prog, "u_material_albedo");
+    sp.u_material_roughness_loc = glGetUniformLocation(prog, "u_material_roughness");
+    sp.u_material_metallic_loc = glGetUniformLocation(prog, "u_material_metallic");
+    sp.u_material_emissive_loc = glGetUniformLocation(prog, "u_material_emissive");
+    sp.u_material_flags_loc = glGetUniformLocation(prog, "u_material_flags");
+    sp.u_mesh_flags_loc = glGetUniformLocation(prog, "u_mesh_flags");
+    sp.u_albedo_tex_loc = glGetUniformLocation(prog, "u_albedo_tex");
+    sp.u_view_pos_loc = glGetUniformLocation(prog, "u_view_pos");
+    sp.u_light_dir_loc = glGetUniformLocation(prog, "u_light_dir");
+    sp.u_is_skybox_loc = glGetUniformLocation(prog, "u_is_skybox");
+    sp.u_light_count_loc = glGetUniformLocation(prog, "u_light_count");
+    sp.u_shadow_map_loc = glGetUniformLocation(prog, "u_shadow_map");
+    sp.u_reflection_tex_loc = glGetUniformLocation(prog, "u_reflection_tex");
+    sp.u_refraction_tex_loc = glGetUniformLocation(prog, "u_refraction_tex");
+    sp.u_reflection_view_proj_loc = glGetUniformLocation(prog, "u_reflection_view_proj");
+    sp.u_screen_size_loc = glGetUniformLocation(prog, "u_screen_size");
+    sp.u_render_features_loc = glGetUniformLocation(prog, "u_render_features");
+    sp.u_scene_tex_loc = glGetUniformLocation(prog, "u_scene_tex");
+    sp.u_flow_tex_loc = glGetUniformLocation(prog, "u_flowTex");
+    sp.u_light_pos_type_loc = glGetUniformLocation(prog, light_pos_name);
+    sp.u_light_dir_inner_loc = glGetUniformLocation(prog, light_dir_name);
+    sp.u_light_color_outer_loc = glGetUniformLocation(prog, light_color_name);
+    sp.u_light_params_loc = glGetUniformLocation(prog, light_param_name);
+    sp.u_time_loc = glGetUniformLocation(prog, "u_time");
 
     return sp;
 }
@@ -591,7 +632,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     wglSwapIntervalEXT_t wglSwapIntervalEXT =
         (wglSwapIntervalEXT_t)wglGetProcAddress("wglSwapIntervalEXT");
 
-    if (wglSwapIntervalEXT) wglSwapIntervalEXT(0);
+    if (wglSwapIntervalEXT) wglSwapIntervalEXT(1);
 
 
 
@@ -604,9 +645,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     ShowWindow(hWnd, nShowCmd);
     UpdateWindow(hWnd);
-
-    Vec3 vel = {0.0f, 0.0f, 0.0f};
-    //thrust = 10.0f;
+    ShowCursor(FALSE);
 
     LARGE_INTEGER freq, prev, curr;
     QueryPerformanceFrequency(&freq);
@@ -802,11 +841,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     // 8. Main loop
     MSG msg;
     bool running = true;
-    //DELETE FRAME
-    char frame = 0;
+    float fps_acc = 0.0f;
+    int fps_frames = 0;
+    char fpschar[16] = "FPS: 0";
     while (running) {
-        frame++;
-        float thrust = 0.01f;
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) running = false;
             TranslateMessage(&msg);
@@ -842,7 +880,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             angVel = (Vec3){0, 0, 0,};
             asteroid_material.flags ^= MATERIAL_IS_FLAT;
 
-            test_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/asteroid.frag");
             planet_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/planet.frag");
             skybox_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/skybox.frag");
             glEnable(GL_LINE_SMOOTH);
@@ -955,6 +992,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         case WM_SIZE: {
             win_w = LOWORD(lParam);
+            if (!win_w) win_w = 1;
             win_h = HIWORD(lParam); if (!win_h) win_h = 1;
             glViewport(0, 0, win_w, win_h);
             aspectRatio = (float)win_w / (float)win_h;
