@@ -13,7 +13,8 @@ extern float aspectRatio;
 #define pi2 (pi * 2.0f)
 #define DEG2RAD (3.14159265f / 180.0f)
 
-#define NUM_STARS 80000
+#define MAX_TEXTURES 256
+#define MAX_FORWARD_LIGHTS 4
 
 
 typedef struct { float x, y; } Vec2;
@@ -35,17 +36,13 @@ typedef struct {
     int tex_id;
 
     uint32_t flags;
-
-    //TO BE DEPRECATED, DO NOT USE:
-    int has_texture_albedo;
-    int has_texture_normal;
-    int has_texture_metallic_roughness;
-    int has_texture_emissive;
 } Material;
-#define MATERIAL_FLAG_ALBEDO     (1 << 0)
-#define MATERIAL_FLAG_NORMAL      (1 << 1)
-#define MATERIAL_FLAG_EMISSIVEF0SWITCH (1 << 2) //Dialectric Specular
-#define MATERIAL_IS_FLAT (1 << 5)
+#define MATERIAL_FLAG_ALBEDO            (1 << 0)
+#define MATERIAL_FLAG_NORMAL            (1 << 1)
+#define MATERIAL_FLAG_EMISSIVEF0SWITCH  (1 << 2) //Dialectric Specular
+#define MATERIAL_FLAG_REFLECTION        (1 << 3)
+#define MATERIAL_FLAG_REFRACTION        (1 << 4)
+#define MATERIAL_IS_FLAT                (1 << 5)
 
 typedef struct {
     int index_offset;
@@ -89,6 +86,7 @@ typedef struct {
 #define OBJ_FLAG_STATIC         (1 << 1)
 #define OBJ_FLAG_CAST_SHADOWS   (1 << 2)
 #define OBJ_FLAG_RECEIVE_SHADOWS (1 << 3)
+#define OBJ_FLAG_HIDE_IN_REFLECTION (1 << 4)
 typedef float Mat4[16];
 typedef struct {
     GLuint id; // GL shader program ID
@@ -101,9 +99,27 @@ typedef struct {
     GLint u_material_roughness_loc;
     GLint u_material_metallic_loc;
     GLint u_material_emissive_loc;
+    GLint u_material_flags_loc;
+    GLint u_mesh_flags_loc;
+    GLint u_albedo_tex_loc;
     GLint u_light_space_matrix_loc;
-
-    GLint u_flags_loc;
+    GLint u_view_pos_loc;
+    GLint u_light_dir_loc;
+    GLint u_is_skybox_loc;
+    GLint u_light_count_loc;
+    GLint u_shadow_map_loc;
+    GLint u_reflection_tex_loc;
+    GLint u_refraction_tex_loc;
+    GLint u_reflection_view_proj_loc;
+    GLint u_screen_size_loc;
+    GLint u_render_features_loc;
+    GLint u_scene_tex_loc;
+    GLint u_flow_tex_loc;
+    GLint u_light_pos_type_loc;
+    GLint u_light_dir_inner_loc;
+    GLint u_light_color_outer_loc;
+    GLint u_light_params_loc;
+    GLint u_time_loc;
 
 } ShaderProgram;
 #define MAX_MATERIALS 256
@@ -118,5 +134,6 @@ typedef struct {
 
 
 extern const Material* material_pool[MAX_MATERIALS];
+extern GLuint texture_pool[MAX_TEXTURES];
 
 #endif // DEFS_H

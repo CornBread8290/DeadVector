@@ -57,6 +57,14 @@ float noise3f(Vec3 p) {
     }
     return acc;
 }
+float asteroid_shape(Vec3 dir, float* base_out, float* fine_out) {
+    float base = fbm(dir, 3, 0.6f, 1.5f);
+    float fine = 1.0f + fbm(vec3_scale(dir, 3.0f), 5, 0.5f, 2.5f) * 0.25f;
+    if (base_out) *base_out = base;
+    if (fine_out) *fine_out = fine;
+    return (1.0f + base * 0.7f) * fine;
+}
+
 float fbm(Vec3 p, int octaves, float persistence, float lacunarity) {
     float amplitude = 1.0f;
     float frequency = 1.0f;
@@ -400,18 +408,57 @@ static inline const Material* get_mat(int id){
     return m ? m : &defm;
 }
 
+static inline int mat_is_transparent(const Material* m){
+    return m->albedo.a < 0.999f;
+}
+
+static int mesh_has_pass(const Mesh* mesh, int transparent_pass){
+    if(!mesh) return 0;
+    if(transparent_pass < 0) return 1;
+
+    if(mesh->submesh_count <= 0){
+        return mat_is_transparent(get_mat(mesh->material_id)) == transparent_pass;
+    }
+
+    for(int i = 0; i < mesh->submesh_count; ++i){
+        const SubMesh* s = &mesh->submeshes[i];
+        if(mat_is_transparent(get_mat((int)s->material_id)) == transparent_pass) return 1;
+    }
+    return 0;
+}
+
 static inline void apply_mat(const ShaderProgram* sh, const Mesh* mesh, const Material* m){
-    if(sh->u_flags_loc!=-1) glUniform1i(sh->u_flags_loc, (GLint)(mesh->flags | m->flags));
+    if(sh->u_material_flags_loc!=-1) glUniform1i(sh->u_material_flags_loc, (GLint)m->flags);
+    if(sh->u_mesh_flags_loc!=-1) glUniform1i(sh->u_mesh_flags_loc, (GLint)mesh->flags);
     if(sh->u_material_albedo_loc!=-1)    glUniform4f(sh->u_material_albedo_loc,    m->albedo.r,m->albedo.g,m->albedo.b,m->albedo.a);
     if(sh->u_material_roughness_loc!=-1) glUniform1f(sh->u_material_roughness_loc, m->roughness);
     if(sh->u_material_metallic_loc!=-1)  glUniform1f(sh->u_material_metallic_loc,  m->metallic);
     if(sh->u_material_emissive_loc!=-1)  glUniform1f(sh->u_material_emissive_loc,  m->emissiveF0);
+    if(sh->u_albedo_tex_loc!=-1){
+        GLuint tex = 0;
+        if((m->flags & MATERIAL_FLAG_ALBEDO) && m->tex_id >= 0 && m->tex_id < MAX_TEXTURES){
+            tex = texture_pool[m->tex_id];
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glUniform1i(sh->u_albedo_tex_loc, 0);
+    }
 }
 
-void draw_object(const Object* o, const ShaderProgram* sh, Mesh* pool[], GLenum prim){
+int object_has_opaque_parts(const Object* o, Mesh* pool[]){
+    if(!o || !(o->flags & OBJ_FLAG_VISIBLE)) return 0;
+    return mesh_has_pass(pool[o->mesh_id], 0);
+}
+
+int object_has_transparent_parts(const Object* o, Mesh* pool[]){
+    if(!o || !(o->flags & OBJ_FLAG_VISIBLE)) return 0;
+    return mesh_has_pass(pool[o->mesh_id], 1);
+}
+
+void draw_object_pass(const Object* o, const ShaderProgram* sh, Mesh* pool[], GLenum prim, int transparent_pass){
     glUseProgram(sh->id);
     const Mesh* mesh = pool[o->mesh_id];
-    if(!mesh || !(o->flags & OBJ_FLAG_VISIBLE)) return;
+    if(!mesh || !(o->flags & OBJ_FLAG_VISIBLE) || !mesh_has_pass(mesh, transparent_pass)) return;
 
     Mat4 T,R,S,M,TR;
     mat4_identity(T); mat4_translate(T,o->position.x,o->position.y,o->position.z);
@@ -425,30 +472,39 @@ void draw_object(const Object* o, const ShaderProgram* sh, Mesh* pool[], GLenum 
 
     if(mesh->submesh_count<=0){
         const Material* m = get_mat(mesh->material_id);
+        if(transparent_pass >= 0 && mat_is_transparent(m) != transparent_pass){
+            glBindVertexArray(0);
+            return;
+        }
         apply_mat(sh, mesh, m);
         glDrawElements(prim, mesh->index_count, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
         return;
     }
 
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    for(int pass=0; pass<2; pass++){
-        int transp = (pass==1);
-        glDepthMask(transp ? GL_FALSE : GL_TRUE);
-        if(transp) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-
-        for(int i=0;i<mesh->submesh_count;i++){
-            const SubMesh* s = &mesh->submeshes[i];
-            const Material* m = get_mat((int)s->material_id);
-            if(((m->albedo.a < 0.999f) != transp)) continue;
-            apply_mat(sh, mesh, m);
-            glDrawElements(prim, s->index_count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned)*s->index_offset));
-        }
+    for(int i=0;i<mesh->submesh_count;i++){
+        const SubMesh* s = &mesh->submeshes[i];
+        const Material* m = get_mat((int)s->material_id);
+        if(transparent_pass >= 0 && mat_is_transparent(m) != transparent_pass) continue;
+        apply_mat(sh, mesh, m);
+        glDrawElements(prim, s->index_count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned)*s->index_offset));
     }
-
-    glDepthMask(GL_TRUE);
     glBindVertexArray(0);
+}
+
+void draw_object(const Object* o, const ShaderProgram* sh, Mesh* pool[], GLenum prim){
+    if(object_has_opaque_parts(o, pool)){
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+        draw_object_pass(o, sh, pool, prim, 0);
+    }
+    if(object_has_transparent_parts(o, pool)){
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        draw_object_pass(o, sh, pool, prim, 1);
+        glDepthMask(GL_TRUE);
+    }
 }
 
 
@@ -705,14 +761,30 @@ void mesh_clear(Mesh* m){ m->vertex_count=0; m->index_count=0; m->submesh_count=
 
 // 8-vert box, 12 tris
 void make_box(Mesh* m, Vec3 mn, Vec3 mx){
-    mesh_clear(m); ensure_v(m,8); ensure_i(m,36);
-    Color4 white={1,1,1,1}; UV zuv={0,0};
-    int base=m->vertex_count;
-    Vec3 p[8]={ v3(mn.x,mn.y,mn.z), v3(mx.x,mn.y,mn.z), v3(mx.x,mx.y,mn.z), v3(mn.x,mx.y,mn.z),
-                v3(mn.x,mn.y,mx.z), v3(mx.x,mn.y,mx.z), v3(mx.x,mx.y,mx.z), v3(mn.x,mx.y,mx.z) };
-    for(int i=0;i<8;i++){ m->vertices[m->vertex_count++]=(VertexFormat){p[i],v3(0,0,1),white,zuv}; }
-    unsigned q[36]={ 0,1,2,0,2,3, 4,6,5,4,7,6, 0,4,5,0,5,1, 1,5,6,1,6,2, 2,6,7,2,7,3, 3,7,4,3,4,0 };
-    for(int i=0;i<36;i++) m->indices[m->index_count++]=base+q[i];
+    mesh_clear(m); ensure_v(m,24); ensure_i(m,36);
+    const Color4 white={1,1,1,1};
+    const VertexFormat verts[24]={
+        {{mn.x,mn.y,mn.z},{ 0, 0,-1},white,{0,0}}, {{mn.x,mx.y,mn.z},{ 0, 0,-1},white,{0,1}},
+        {{mx.x,mx.y,mn.z},{ 0, 0,-1},white,{1,1}}, {{mx.x,mn.y,mn.z},{ 0, 0,-1},white,{1,0}},
+        {{mn.x,mn.y,mx.z},{ 0, 0, 1},white,{0,0}}, {{mx.x,mn.y,mx.z},{ 0, 0, 1},white,{1,0}},
+        {{mx.x,mx.y,mx.z},{ 0, 0, 1},white,{1,1}}, {{mn.x,mx.y,mx.z},{ 0, 0, 1},white,{0,1}},
+        {{mn.x,mn.y,mn.z},{-1, 0, 0},white,{0,0}}, {{mn.x,mn.y,mx.z},{-1, 0, 0},white,{1,0}},
+        {{mn.x,mx.y,mx.z},{-1, 0, 0},white,{1,1}}, {{mn.x,mx.y,mn.z},{-1, 0, 0},white,{0,1}},
+        {{mx.x,mn.y,mn.z},{ 1, 0, 0},white,{0,0}}, {{mx.x,mx.y,mn.z},{ 1, 0, 0},white,{0,1}},
+        {{mx.x,mx.y,mx.z},{ 1, 0, 0},white,{1,1}}, {{mx.x,mn.y,mx.z},{ 1, 0, 0},white,{1,0}},
+        {{mn.x,mn.y,mn.z},{ 0,-1, 0},white,{0,0}}, {{mx.x,mn.y,mn.z},{ 0,-1, 0},white,{1,0}},
+        {{mx.x,mn.y,mx.z},{ 0,-1, 0},white,{1,1}}, {{mn.x,mn.y,mx.z},{ 0,-1, 0},white,{0,1}},
+        {{mn.x,mx.y,mn.z},{ 0, 1, 0},white,{0,0}}, {{mn.x,mx.y,mx.z},{ 0, 1, 0},white,{0,1}},
+        {{mx.x,mx.y,mx.z},{ 0, 1, 0},white,{1,1}}, {{mx.x,mx.y,mn.z},{ 0, 1, 0},white,{1,0}}
+    };
+    const unsigned idx[36]={
+        0,1,2,0,2,3, 4,5,6,4,6,7, 8,9,10,8,10,11,
+        12,13,14,12,14,15, 16,17,18,16,18,19, 20,21,22,20,22,23
+    };
+    memcpy(m->vertices + m->vertex_count, verts, sizeof verts);
+    m->vertex_count += 24;
+    memcpy(m->indices + m->index_count, idx, sizeof idx);
+    m->index_count += 36;
 }
 
 // regular N-gon prism with caps

@@ -31,9 +31,6 @@ Mask mask_not(const Mesh* m, const Mask a);
 Mask mask_and(const Mesh* m, const Mask a, const Mask b);
 Mask mask_andnot(const Mesh* m, const Mask a, const Mask b);
 
-// cockpit builder
-void build_cockpit_interior(Mesh* m);
-
 // simple whole-mesh transforms
 void mesh_scale_all(Mesh* m, Vec3 k);
 void mesh_translate_all(Mesh* m, Vec3 d);
@@ -53,6 +50,7 @@ float smoothstep(float edge0, float edge1, float x);
 float hashf3(Vec3 p);
 float noise3f(Vec3 p);
 float fbm(Vec3 p, int octaves, float persistence, float lacunarity);
+float asteroid_shape(Vec3 dir, float* base_out, float* fine_out);
 
 Vec3 vec3_normalize(Vec3 v);
 Vec3 vec3_sub(Vec3 a, Vec3 b);
@@ -84,6 +82,9 @@ int find_or_add_vertex(Mesh* mesh, VertexFormat v);
 int add_vertex(Mesh* mesh, VertexFormat v);
 void add_triangle(Mesh* mesh, unsigned int i0, unsigned int i1, unsigned int i2);
 void upload_mesh(Mesh* mesh);
+int object_has_opaque_parts(const Object* obj, Mesh* mesh_pool[]);
+int object_has_transparent_parts(const Object* obj, Mesh* mesh_pool[]);
+void draw_object_pass(const Object* obj, const ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type, int transparent_pass);
 void draw_object(const Object* obj, const ShaderProgram* shader, Mesh* mesh_pool[], GLenum primitive_type);
 
 #endif // UTILS_H
