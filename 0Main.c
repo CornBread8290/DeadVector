@@ -1,7 +1,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include "defs.h"
 #include "3utils.h"
+#include "2Audio.h"
 #include "4Font.h"
+#include "5Speech.h"
+#include "6Volume.h"
+#include "7Physics.h"
+#include "8Mesh.h"
+#include "9Meshes.h"
+#include "DEBUG_Freecam.h"
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <glad/gl.h>
@@ -452,6 +460,21 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
     LARGE_INTEGER freq, prev, curr;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&prev);
+    int flashlight_on = 0;
+    int flashlight_prev = 0;
+
+    snd_init();
+    int engine_voice = -1;
+    int fire_prev = 0;
+
+    static const char PH_HELLO[]  = "ACp-fiAhTn6AeQNGgIOKCKyDd6oUqHd0qiJ4dnYCBDxwbIAC3mxUqgNGbGyKDRhsbGM";
+    static const char PH_LIGHTS[] = "A0aOjooLro6Gqgmohn2qDhh9dWAaOHVtQAdibW-QEkZvcn0GHnJ0agehdGyqCcZsVKoNGGxsYx04bGxKDRhsbGM";
+    static const char PH_LIGHTS_OUT[] = "A0aOjooLro6Dqgmog3-qDhh_e2AaOHt3QAuud2yqFMZsVKoOGGxsYA";
+    const Vec3 speaker_off = {0.5f, 0.1f, -0.9f}; // speaker lives by the console
+    const char* monitor_text = "CAM 02 - NO SIGNAL";
+    int speech_voice = -1;
+    int said_hello = 0;
+    float game_time = 0.0f;
 
 
     Mesh asteroid_mesh = {0};
@@ -807,6 +830,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         case WM_DESTROY:
             ClipCursor(NULL);
+            snd_shutdown();
             wglMakeCurrent(NULL, NULL);
             wglDeleteContext(hRC); hRC = NULL;
             ReleaseDC(hWnd, hDC);  hDC  = NULL;
