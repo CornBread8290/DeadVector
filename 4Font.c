@@ -724,7 +724,7 @@ void hud_init_minimal(void){
     hud_dirty = 1;
 }
 
-void draw_hud(void){
+void draw_hud_at(float x, float y){
     if (!hud_vao) hud_init_minimal();
 
     // Upload texture if buffer changed
@@ -733,7 +733,7 @@ void draw_hud(void){
     GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
     float W = (float)vp[2], H = (float)vp[3];
 
-    float x = 88.0f, y = 58.0f, w = (float)hud_w, h = (float)hud_h;
+    float w = (float)hud_w, h = (float)hud_h;
 
     // Minimal state setup
     GLboolean blend_was = glIsEnabled(GL_BLEND);
@@ -764,3 +764,5 @@ void draw_hud(void){
     if (!blend_was) glDisable(GL_BLEND);
     glActiveTexture((GLenum)last_active);
 }
+
+void draw_hud(void){ draw_hud_at(88.0f, 58.0f); }
