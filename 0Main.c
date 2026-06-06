@@ -70,6 +70,10 @@ GLuint compile_shader_from_file(const char* filepath, GLenum shader_type) {
 }
 
 ShaderProgram create_shader_program_from_files(const char* vert_path, const char* frag_path) {
+    static const char* light_pos_name = "u_light_pos_type[0]";
+    static const char* light_dir_name = "u_light_dir_inner[0]";
+    static const char* light_color_name = "u_light_color_outer[0]";
+    static const char* light_param_name = "u_light_params[0]";
     GLuint vs = compile_shader_from_file(vert_path, GL_VERTEX_SHADER);
     GLuint fs = compile_shader_from_file(frag_path, GL_FRAGMENT_SHADER);
 
@@ -124,13 +128,84 @@ ShaderProgram create_shader_program_from_files(const char* vert_path, const char
 
 
 // OpenGL state
-GLuint skybox_vao, skybox_vbo, skybox_ibo;
+GLuint skybox_vao, skybox_vbo, skybox_ibo, fullscreen_vao;
 Mat4 light_space_matrix;
+GLuint shadow_map_tex;
+
+enum { SHADOW_MAP_SIZE = 2048 };
+enum { LIGHT_DIRECTIONAL = 0, LIGHT_POINT = 1, LIGHT_SPOT = 2 };
+enum { RENDER_FEATURE_REFLECTION = 1 << 0, RENDER_FEATURE_REFRACTION = 1 << 1 };
+enum {
+    RENDER_WORLD_CLEAR       = 1 << 0,
+    RENDER_WORLD_SKYBOX      = 1 << 1,
+    RENDER_WORLD_OPAQUE      = 1 << 2,
+    RENDER_WORLD_PLANET      = 1 << 3,
+    RENDER_WORLD_TRANSPARENT = 1 << 4,
+    RENDER_WORLD_VOLUME      = 1 << 5
+};
+
+typedef struct {
+    int type;
+    Vec3 position;
+    Vec3 direction;
+    Vec3 color;
+    float intensity;
+    float range;
+    float inner_cos;
+    float outer_cos;
+    int casts_shadow;
+} SceneLight;
+
+typedef struct {
+    GLuint fbo;
+    GLuint color_tex;
+    GLuint depth_rb;
+    int width;
+    int height;
+    GLenum color_format;
+    unsigned char has_depth;
+    unsigned char mipmapped;
+} RenderTarget;
+
+typedef struct {
+    const ShaderProgram* forward_shader;
+    const ShaderProgram* skybox_shader;
+    const ShaderProgram* planet_shader;
+    const Object* const* objects;
+    int object_count;
+    Mesh** mesh_pool;
+    const Object* gas_planet;
+    GLuint planet_flow_tex;
+    GLenum primitive_type;
+    const Volume* volumes;
+    int volume_count;
+    const Ring* ring;
+} RenderScene;
+
+typedef struct {
+    const float* view;
+    const float* projection;
+    Vec3 camera_pos;
+    Vec3 light_dir;
+    const SceneLight* lights;
+    int light_count;
+    GLuint target_fbo;
+    int viewport_w;
+    int viewport_h;
+    const float* reflection_matrix;
+    GLuint reflection_tex;
+    GLuint refraction_tex;
+    int render_features;
+    unsigned int object_skip_flags;
+    int pass_flags;
+    float time;
+} RenderView;
+    Mesh spaceship1;
+
 float aspectRatio = 8.0f/6.0f;
 
-double playback = 1.0;
-
 const Material* material_pool[MAX_MATERIALS];
+GLuint texture_pool[MAX_TEXTURES];
 Mesh* mesh_pool[256];
 Vec3 pos = {0};      // Ship world position
 Vec3 vel = {0};      // Ship linear velocity
@@ -266,39 +341,520 @@ static void generate_cubesphere(Mesh* mesh, Vec3 center, float radius, int subdi
 }
 
 
-void set_common_matrices(ShaderProgram* shader, const float* view, const float* projection) {
-    glUseProgram(shader->id);
-    glUniformMatrix4fv(shader->u_view_loc, 1, GL_FALSE, view);
-    glUniformMatrix4fv(shader->u_projection_loc, 1, GL_FALSE, projection);
-}
-
-void set_common_uniforms(ShaderProgram* s,
+void set_common_uniforms(const ShaderProgram* s,
                          const float* view,
                          const float* proj,
                          Vec3 cam_pos,
                          Vec3 light_dir,
-                         const Material* mat,
-                         uint32_t flags)
+                         const SceneLight* lights,
+                         int light_count,
+                         const float* reflection_matrix,
+                         GLuint reflection_tex,
+                         GLuint refraction_tex,
+                         Vec2 render_size,
+                         int render_features)
 {
+    float light_pos_type[MAX_FORWARD_LIGHTS * 4] = {0};
+    float light_dir_inner[MAX_FORWARD_LIGHTS * 4] = {0};
+    float light_color_outer[MAX_FORWARD_LIGHTS * 4] = {0};
+    float light_params[MAX_FORWARD_LIGHTS * 4] = {0};
+    int count = light_count > MAX_FORWARD_LIGHTS ? MAX_FORWARD_LIGHTS : light_count;
     glUseProgram(s->id);
 
     if (s->u_view_loc        != -1) glUniformMatrix4fv(s->u_view_loc,        1, GL_FALSE, view);
     if (s->u_projection_loc  != -1) glUniformMatrix4fv(s->u_projection_loc,  1, GL_FALSE, proj);
     if (s->u_light_space_matrix_loc != -1) glUniformMatrix4fv(s->u_light_space_matrix_loc, 1, GL_FALSE, light_space_matrix);
 
-    GLint loc;
-    if ((loc = glGetUniformLocation(s->id, "u_view_pos"))  != -1) glUniform3f(loc, cam_pos.x,  cam_pos.y,  cam_pos.z);
-    if ((loc = glGetUniformLocation(s->id, "u_light_dir")) != -1) glUniform3f(loc, light_dir.x, light_dir.y, light_dir.z);
-    if ((loc = glGetUniformLocation(s->id, "u_is_skybox")) != -1) glUniform1i(loc, 0);
-
-    if (mat) {
-        if (s->u_material_albedo_loc    != -1) glUniform4f(s->u_material_albedo_loc,    mat->albedo.r, mat->albedo.g, mat->albedo.b, mat->albedo.a);
-        if (s->u_material_roughness_loc != -1) glUniform1f(s->u_material_roughness_loc, mat->roughness);
-        if (s->u_material_metallic_loc  != -1) glUniform1f(s->u_material_metallic_loc,  mat->metallic);
-        if (s->u_material_emissive_loc  != -1) glUniform1f(s->u_material_emissive_loc,  mat->emissiveF0);
+    if (s->u_view_pos_loc != -1) glUniform3f(s->u_view_pos_loc, cam_pos.x, cam_pos.y, cam_pos.z);
+    if (s->u_light_dir_loc != -1) glUniform3f(s->u_light_dir_loc, light_dir.x, light_dir.y, light_dir.z);
+    if (s->u_is_skybox_loc != -1) glUniform1i(s->u_is_skybox_loc, 0);
+    if (s->u_light_count_loc != -1) glUniform1i(s->u_light_count_loc, count);
+    if (s->u_render_features_loc != -1) glUniform1i(s->u_render_features_loc, render_features);
+    if (s->u_screen_size_loc != -1) glUniform2f(s->u_screen_size_loc, render_size.x, render_size.y);
+    if (s->u_reflection_view_proj_loc != -1 && reflection_matrix) {
+        glUniformMatrix4fv(s->u_reflection_view_proj_loc, 1, GL_FALSE, reflection_matrix);
     }
-    if ((loc = glGetUniformLocation(s->id, "u_flags")) != -1)
-        glUniform1i(loc, (GLint)flags);
+    if (s->u_shadow_map_loc != -1) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, shadow_map_tex);
+        glUniform1i(s->u_shadow_map_loc, 1);
+    }
+    if (s->u_reflection_tex_loc != -1) {
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, (render_features & RENDER_FEATURE_REFLECTION) ? reflection_tex : 0);
+        glUniform1i(s->u_reflection_tex_loc, 2);
+    }
+    if (s->u_refraction_tex_loc != -1) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, (render_features & RENDER_FEATURE_REFRACTION) ? refraction_tex : 0);
+        glUniform1i(s->u_refraction_tex_loc, 3);
+    }
+    glActiveTexture(GL_TEXTURE0);
+
+    for (int i = 0; i < MAX_FORWARD_LIGHTS; ++i) {
+        const SceneLight zero = {0};
+        const SceneLight* l = (lights && i < light_count) ? &lights[i] : &zero;
+
+        light_pos_type[i * 4 + 0] = l->position.x;
+        light_pos_type[i * 4 + 1] = l->position.y;
+        light_pos_type[i * 4 + 2] = l->position.z;
+        light_pos_type[i * 4 + 3] = (float)l->type;
+
+        light_dir_inner[i * 4 + 0] = l->direction.x;
+        light_dir_inner[i * 4 + 1] = l->direction.y;
+        light_dir_inner[i * 4 + 2] = l->direction.z;
+        light_dir_inner[i * 4 + 3] = l->inner_cos;
+
+        light_color_outer[i * 4 + 0] = l->color.x;
+        light_color_outer[i * 4 + 1] = l->color.y;
+        light_color_outer[i * 4 + 2] = l->color.z;
+        light_color_outer[i * 4 + 3] = l->outer_cos;
+
+        light_params[i * 4 + 0] = l->range;
+        light_params[i * 4 + 1] = l->intensity;
+        light_params[i * 4 + 2] = (float)l->casts_shadow;
+    }
+
+    if (s->u_light_pos_type_loc != -1) glUniform4fv(s->u_light_pos_type_loc, MAX_FORWARD_LIGHTS, light_pos_type);
+    if (s->u_light_dir_inner_loc != -1) glUniform4fv(s->u_light_dir_inner_loc, MAX_FORWARD_LIGHTS, light_dir_inner);
+    if (s->u_light_color_outer_loc != -1) glUniform4fv(s->u_light_color_outer_loc, MAX_FORWARD_LIGHTS, light_color_outer);
+    if (s->u_light_params_loc != -1) glUniform4fv(s->u_light_params_loc, MAX_FORWARD_LIGHTS, light_params);
+}
+
+typedef struct {
+    const Object* obj;
+    float dist2;
+} RenderItem;
+
+static float object_distance_sq(const Object* obj, Vec3 camera_pos){
+    const float dx = obj->position.x - camera_pos.x;
+    const float dy = obj->position.y - camera_pos.y;
+    const float dz = obj->position.z - camera_pos.z;
+    return dx*dx + dy*dy + dz*dz;
+}
+
+static void sort_render_items(RenderItem* items, int count){
+    for(int i = 1; i < count; ++i){
+        RenderItem key = items[i];
+        int j = i - 1;
+        while(j >= 0 && items[j].dist2 < key.dist2){
+            items[j + 1] = items[j];
+            --j;
+        }
+        items[j + 1] = key;
+    }
+}
+
+static void render_forward_opaque_objects(const Object* const* objects,
+                                          int count,
+                                          const ShaderProgram* shader,
+                                          Mesh* pool[],
+                                          GLenum prim,
+                                          unsigned int skip_flags)
+{
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+
+    for(int i = 0; i < count; ++i){
+        const Object* obj = objects[i];
+        if(obj->flags & skip_flags) continue;
+        if(object_has_opaque_parts(obj, pool)){
+            draw_object_pass(obj, shader, pool, prim, 0);
+        }
+    }
+}
+
+static void render_forward_transparent_objects(const Object* const* objects,
+                                               int count,
+                                               const ShaderProgram* shader,
+                                               Mesh* pool[],
+                                               GLenum prim,
+                                               Vec3 camera_pos,
+                                               unsigned int skip_flags)
+{
+    RenderItem transparent[64];
+    int transparent_count = 0;
+
+    for(int i = 0; i < count; ++i){
+        const Object* obj = objects[i];
+        if(obj->flags & skip_flags) continue;
+        if(object_has_transparent_parts(obj, pool) && transparent_count < (int)(sizeof transparent / sizeof transparent[0])){
+            transparent[transparent_count++] = (RenderItem){
+                .obj = obj,
+                .dist2 = object_distance_sq(obj, camera_pos)
+            };
+        }
+    }
+
+    if(!transparent_count) return;
+
+    sort_render_items(transparent, transparent_count);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+
+    for(int i = 0; i < transparent_count; ++i){
+        draw_object_pass(transparent[i].obj, shader, pool, prim, 1);
+    }
+
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+}
+
+static void render_shadow_casters(const Object* const* objects,
+                                  int count,
+                                  const ShaderProgram* shader,
+                                  Mesh* pool[],
+                                  GLenum prim)
+{
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+
+    for(int i = 0; i < count; ++i){
+        const Object* obj = objects[i];
+        if(!(obj->flags & OBJ_FLAG_CAST_SHADOWS)) continue;
+        if(!object_has_opaque_parts(obj, pool)) continue;
+        draw_object_pass(obj, shader, pool, prim, 0);
+    }
+}
+
+static void build_directional_light_matrix(Mat4 out, Vec3 light_dir, Vec3 focus){
+    Mat4 light_view, light_proj;
+    Vec3 eye = {
+        focus.x - light_dir.x * 42.0f,
+        focus.y - light_dir.y * 42.0f,
+        focus.z - light_dir.z * 42.0f
+    };
+    Vec3 up = fabsf(light_dir.y) > 0.92f ? (Vec3){0.0f, 0.0f, 1.0f} : (Vec3){0.0f, 1.0f, 0.0f};
+
+    mat4_lookat(light_view, eye, focus, up);
+    mat4_ortho(light_proj, -34.0f, 34.0f, -34.0f, 34.0f, 1.0f, 96.0f);
+    mat4_multiply(out, light_proj, light_view);
+}
+
+static GLenum render_target_data_type(GLenum color_format){
+    return color_format == GL_RGBA8 ? GL_UNSIGNED_BYTE : GL_FLOAT;
+}
+
+static void ensure_render_target(RenderTarget* rt,
+                                 int width,
+                                 int height,
+                                 GLenum color_format,
+                                 unsigned char has_depth,
+                                 unsigned char mipmapped)
+{
+    if(width < 1) width = 1;
+    if(height < 1) height = 1;
+
+    if(rt->fbo &&
+       rt->width == width &&
+       rt->height == height &&
+       rt->color_format == color_format &&
+       rt->has_depth == has_depth &&
+       rt->mipmapped == mipmapped){
+        return;
+    }
+
+    if(!rt->fbo) glGenFramebuffers(1, &rt->fbo);
+    if(!rt->color_tex) glGenTextures(1, &rt->color_tex);
+    if(has_depth && !rt->depth_rb) glGenRenderbuffers(1, &rt->depth_rb);
+
+    rt->width = width;
+    rt->height = height;
+    rt->color_format = color_format;
+    rt->has_depth = has_depth;
+    rt->mipmapped = mipmapped;
+
+    glBindTexture(GL_TEXTURE_2D, rt->color_tex);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 color_format,
+                 width,
+                 height,
+                 0,
+                 GL_RGBA,
+                 render_target_data_type(color_format),
+                 NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mipmapped ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if(mipmapped) glGenerateMipmap(GL_TEXTURE_2D);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, rt->fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rt->color_tex, 0);
+
+    if(has_depth){
+        glBindRenderbuffer(GL_RENDERBUFFER, rt->depth_rb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rt->depth_rb);
+    } else {
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+    }
+
+    if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE){
+        fprintf(stderr, "FRAMEBUFFER INCOMPLETE %dx%d\n", width, height);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+static void render_skybox_pass(const ShaderProgram* skybox_shader, const Mat4 view, const Mat4 projection){
+    Mat4 view_no_translate;
+    memcpy(view_no_translate, view, sizeof(Mat4));
+    view_no_translate[12] = view_no_translate[13] = view_no_translate[14] = 0.0f;
+
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skybox_shader->id);
+    if (skybox_shader->u_is_skybox_loc != -1) glUniform1i(skybox_shader->u_is_skybox_loc, 1);
+    glUniformMatrix4fv(skybox_shader->u_view_loc, 1, GL_FALSE, view_no_translate);
+    glUniformMatrix4fv(skybox_shader->u_projection_loc, 1, GL_FALSE, projection);
+    glBindVertexArray(skybox_vao);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+}
+
+static void render_planet_pass(const ShaderProgram* planet_shader,
+                               const Object* gas_planet,
+                               Mesh* pool[],
+                               GLuint planet_flow_tex,
+                               const Mat4 view,
+                               const Mat4 projection,
+                               Vec3 cam_pos,
+                               Vec3 light_dir,
+                               const Ring* ring)
+{
+    glUseProgram(planet_shader->id);
+    if (ring) {
+        glUniform4f(40, ring->centre.x, ring->centre.y, ring->centre.z, ring->planet_r);
+        glUniform4f(41, ring->axis.x, ring->axis.y, ring->axis.z, 0.0f);
+        glUniform4f(42, ring->inner_r, ring->outer_r, ring->tau, 0.0f);
+    } else {
+        glUniform4f(42, 0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    if (planet_shader->u_is_skybox_loc != -1) glUniform1i(planet_shader->u_is_skybox_loc, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, planet_flow_tex);
+    if (planet_shader->u_flow_tex_loc != -1) glUniform1i(planet_shader->u_flow_tex_loc, 0);
+    glUniformMatrix4fv(planet_shader->u_view_loc, 1, GL_FALSE, view);
+    glUniformMatrix4fv(planet_shader->u_projection_loc, 1, GL_FALSE, projection);
+    glUniformMatrix4fv(planet_shader->u_light_space_matrix_loc, 1, GL_FALSE, light_space_matrix);
+    if (planet_shader->u_light_dir_loc != -1) glUniform3f(planet_shader->u_light_dir_loc, light_dir.x, light_dir.y, light_dir.z);
+    if (planet_shader->u_view_pos_loc != -1) glUniform3f(planet_shader->u_view_pos_loc, cam_pos.x, cam_pos.y, cam_pos.z);
+    draw_object(gas_planet, planet_shader, pool, GL_TRIANGLES);
+}
+
+static void render_post_process(const ShaderProgram* post_shader, GLuint scene_tex){
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, win_w, win_h);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glUseProgram(post_shader->id);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, scene_tex);
+    if (post_shader->u_scene_tex_loc != -1) glUniform1i(post_shader->u_scene_tex_loc, 0);
+    if (post_shader->u_screen_size_loc != -1) glUniform2f(post_shader->u_screen_size_loc, (float)win_w, (float)win_h);
+    glBindVertexArray(fullscreen_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+}
+
+static void render_monitor_post_process(const ShaderProgram* monitor_post_shader,
+                                        GLuint scene_tex,
+                                        const RenderTarget* dst,
+                                        float time)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, dst->fbo);
+    glViewport(0, 0, dst->width, dst->height);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glUseProgram(monitor_post_shader->id);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, scene_tex);
+    if (monitor_post_shader->u_scene_tex_loc != -1) glUniform1i(monitor_post_shader->u_scene_tex_loc, 0);
+    if (monitor_post_shader->u_screen_size_loc != -1) glUniform2f(monitor_post_shader->u_screen_size_loc, (float)dst->width, (float)dst->height);
+    if (monitor_post_shader->u_time_loc != -1) glUniform1f(monitor_post_shader->u_time_loc, time);
+    glBindVertexArray(fullscreen_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+}
+
+static void render_world_view(const RenderScene* scene, const RenderView* view)
+{
+    if(!scene || !view) return;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, view->target_fbo);
+    glViewport(0, 0, view->viewport_w, view->viewport_h);
+    glEnable(GL_DEPTH_TEST);
+
+    if(view->pass_flags & RENDER_WORLD_CLEAR){
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    }
+
+    if((view->pass_flags & RENDER_WORLD_SKYBOX) && scene->skybox_shader){
+        render_skybox_pass(scene->skybox_shader, view->view, view->projection);
+    }
+
+    if((view->pass_flags & (RENDER_WORLD_OPAQUE | RENDER_WORLD_TRANSPARENT)) && scene->forward_shader){
+        set_common_uniforms(scene->forward_shader,
+                            view->view,
+                            view->projection,
+                            view->camera_pos,
+                            view->light_dir,
+                            view->lights,
+                            view->light_count,
+                            view->reflection_matrix,
+                            view->reflection_tex,
+                            view->refraction_tex,
+                            (Vec2){(float)view->viewport_w, (float)view->viewport_h},
+                            view->render_features);
+        glPointSize(1.0f);
+    }
+
+    if((view->pass_flags & RENDER_WORLD_OPAQUE) && scene->forward_shader){
+        render_forward_opaque_objects(scene->objects,
+                                      scene->object_count,
+                                      scene->forward_shader,
+                                      scene->mesh_pool,
+                                      scene->primitive_type,
+                                      view->object_skip_flags);
+    }
+
+    if((view->pass_flags & RENDER_WORLD_PLANET) && scene->planet_shader && scene->gas_planet){
+        render_planet_pass(scene->planet_shader,
+                           scene->gas_planet,
+                           scene->mesh_pool,
+                           scene->planet_flow_tex,
+                           view->view,
+                           view->projection,
+                           view->camera_pos,
+                           view->light_dir,
+                           scene->ring);
+    }
+
+    if(view->pass_flags & RENDER_WORLD_VOLUME){
+        if(scene->ring){
+            vol_ring(view->view, view->projection, view->camera_pos, view->light_dir, scene->ring);
+        }
+        if(scene->volume_count > 0){
+            vol_begin(view->view, view->projection, view->camera_pos, view->light_dir, view->time);
+            for(int i = 0; i < scene->volume_count; ++i) vol_draw(&scene->volumes[i]);
+        }
+        vol_end();
+    }
+
+    if((view->pass_flags & RENDER_WORLD_TRANSPARENT) && scene->forward_shader){
+        render_forward_transparent_objects(scene->objects,
+                                           scene->object_count,
+                                           scene->forward_shader,
+                                           scene->mesh_pool,
+                                           scene->primitive_type,
+                                           view->camera_pos,
+                                           view->object_skip_flags);
+    }
+}
+
+static GLuint create_rgba8_texture(int width, int height, const unsigned char* pixels){
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    return tex;
+}
+
+static GLuint create_monitor_texture(void){
+    const int width = 256;
+    const int height = 144;
+    unsigned char* pixels = (unsigned char*)malloc((size_t)width * (size_t)height * 4u);
+    if(!pixels) return 0;
+
+    for(int y = 0; y < height; ++y){
+        for(int x = 0; x < width; ++x){
+            const float u = (float)x / (float)(width - 1);
+            const float v = (float)y / (float)(height - 1);
+            const float scan = (y & 3) == 0 ? 0.72f : 1.0f;
+            unsigned char r = (unsigned char)(7.0f * scan);
+            unsigned char g = (unsigned char)(18.0f * scan);
+            unsigned char b = (unsigned char)(28.0f * scan);
+
+            if(x > 12 && x < width - 12 && y > 12 && y < height - 12){
+                r = (unsigned char)(10.0f * scan);
+                g = (unsigned char)(30.0f * scan);
+                b = (unsigned char)(45.0f * scan);
+            }
+            if(y > 18 && y < 32){
+                if((x > 22 && x < 78) || (x > 90 && x < 150) || (x > 170 && x < 234)){
+                    r = (unsigned char)(40.0f * scan);
+                    g = (unsigned char)(180.0f * scan);
+                    b = (unsigned char)(225.0f * scan);
+                }
+            }
+
+            if(x > 22 && x < width - 22 && y > 54 && y < 112){
+                const int wave_y = (int)(78.0f + sinf(u * 16.0f + sinf(u * 42.0f) * 0.6f) * 16.0f);
+                const int wave_delta = y > wave_y ? y - wave_y : wave_y - y;
+                if(wave_delta <= 1){
+                    r = (unsigned char)(255.0f * scan);
+                    g = (unsigned char)(170.0f * scan);
+                    b = (unsigned char)(72.0f * scan);
+                }
+                if(y > 92 && y < 108 && ((x / 18) & 1) == 0){
+                    r = (unsigned char)(40.0f * scan);
+                    g = (unsigned char)(210.0f * scan);
+                    b = (unsigned char)(130.0f * scan);
+                }
+            }
+
+            if(x > 176 && x < 236 && y > 40 && y < 88){
+                const float du = (u - 0.81f) * 18.0f;
+                const float dv = (v - 0.44f) * 18.0f;
+                const float glow = 1.0f / (1.0f + du*du + dv*dv);
+                const float boost = glow * 185.0f;
+                r = (unsigned char)fminf(255.0f, r + boost * 0.35f);
+                g = (unsigned char)fminf(255.0f, g + boost * 0.75f);
+                b = (unsigned char)fminf(255.0f, b + boost);
+            }
+
+            unsigned char* px = pixels + (((size_t)y * (size_t)width + (size_t)x) * 4u);
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
+            px[3] = 255;
+        }
+    }
+
+    GLuint tex = create_rgba8_texture(width, height, pixels);
+    free(pixels);
+    return tex;
+}
+
+static void make_panel_mesh(Mesh* mesh, float half_w, float half_h, int material_id){
+    init_mesh(mesh, 8, 12);
+    mesh->material_id = material_id;
+    mesh->flags = MESH_HAS_UVS;
+
+    const Color4 white = {1,1,1,1};
+    mesh->vertices[0] = (VertexFormat){ {-half_w, -half_h, 0.0f}, { 0.0f, 0.0f, 1.0f}, white, {0.0f, 0.0f} };
+    mesh->vertices[1] = (VertexFormat){ { half_w, -half_h, 0.0f}, { 0.0f, 0.0f, 1.0f}, white, {1.0f, 0.0f} };
+    mesh->vertices[2] = (VertexFormat){ { half_w,  half_h, 0.0f}, { 0.0f, 0.0f, 1.0f}, white, {1.0f, 1.0f} };
+    mesh->vertices[3] = (VertexFormat){ {-half_w,  half_h, 0.0f}, { 0.0f, 0.0f, 1.0f}, white, {0.0f, 1.0f} };
+    mesh->vertices[4] = (VertexFormat){ {-half_w, -half_h, 0.0f}, { 0.0f, 0.0f,-1.0f}, white, {0.0f, 0.0f} };
+    mesh->vertices[5] = (VertexFormat){ { half_w, -half_h, 0.0f}, { 0.0f, 0.0f,-1.0f}, white, {1.0f, 0.0f} };
+    mesh->vertices[6] = (VertexFormat){ { half_w,  half_h, 0.0f}, { 0.0f, 0.0f,-1.0f}, white, {1.0f, 1.0f} };
+    mesh->vertices[7] = (VertexFormat){ {-half_w,  half_h, 0.0f}, { 0.0f, 0.0f,-1.0f}, white, {0.0f, 1.0f} };
+    mesh->vertex_count = 8;
+
+    const unsigned indices[12] = { 0,1,2, 0,2,3, 4,6,5, 4,7,6 };
+    memcpy(mesh->indices, indices, sizeof indices);
+    mesh->index_count = 12;
 }
 
 
@@ -499,7 +1055,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         .rotation = {0.0f, 0.0f, 0.0f, 1.0f},
         .scale    = {1.0f, 1.0f, 1.0f},
         .mesh_id  = 1,
-        .flags    = OBJ_FLAG_VISIBLE
+        .flags    = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS
     };
 
     Object gas_planet = {
@@ -537,7 +1093,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         .albedo = {1.0f, 1.00f, 1.0f, 1.0f},
         .roughness = 0.5f,
         .metallic = 0.5f,
-        .emissiveF0 = 0.5f
+        .emissiveF0 = 0.0f
     };
     material_pool[1] = &asteroid_material;
     Material metal_material = {
@@ -547,13 +1103,94 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         .emissiveF0 = 0.0f,
     };
     material_pool[2] = &metal_material;
-    Material glass_material = {
-        .albedo = {1.0f, 1.0f, 1.0f, 0.9f},
-        .roughness = 0.1f,
-        .metallic = 1.0f,
+    Material monitor_bezel_material = {
+        .albedo = {0.06f, 0.08f, 0.10f, 1.0f},
+        .roughness = 0.55f,
+        .metallic = 0.15f,
         .emissiveF0 = 0.0f,
     };
-    material_pool[3] = &glass_material;
+    material_pool[4] = &monitor_bezel_material;
+    Material monitor_screen_material = {
+        .albedo = {1.0f, 1.0f, 1.0f, 1.0f},
+        .roughness = 0.08f,
+        .metallic = 0.0f,
+        .emissiveF0 = 1.8f,
+        .tex_id = 1,
+        .flags = MATERIAL_FLAG_ALBEDO
+    };
+    material_pool[5] = &monitor_screen_material;
+    Material monitor_glass_material = { // faint tint only, no refraction
+        .albedo = {0.65f, 0.83f, 1.0f, 0.10f},
+        .roughness = 0.02f,
+        .metallic = 0.0f,
+        .emissiveF0 = 0.0f,
+    };
+    material_pool[6] = &monitor_glass_material;
+    Material shadow_pad_material = {
+        .albedo = {0.68f, 0.72f, 0.78f, 1.0f},
+        .roughness = 0.85f,
+        .metallic = 0.0f,
+        .emissiveF0 = 0.0f,
+    };
+    material_pool[7] = &shadow_pad_material;
+    Material shadow_block_material = {
+        .albedo = {0.92f, 0.52f, 0.24f, 1.0f},
+        .roughness = 0.35f,
+        .metallic = 0.05f,
+        .emissiveF0 = 0.0f,
+    };
+    material_pool[8] = &shadow_block_material;
+    Material demo_hull_material = {
+        .albedo = {0.28f, 0.31f, 0.37f, 1.0f},
+        .roughness = 0.58f,
+        .metallic = 0.18f,
+        .emissiveF0 = 0.0f,
+    };
+    material_pool[9] = &demo_hull_material;
+    static Material console_body_material = {
+        .albedo = {0.17f, 0.18f, 0.20f, 1.0f},
+        .roughness = 0.62f,
+        .metallic = 0.25f,
+        .emissiveF0 = 0.0f,
+    };
+    material_pool[10] = &console_body_material;
+    static Material console_lit_material = {
+        .albedo = {1.0f, 0.62f, 0.18f, 1.0f},
+        .roughness = 0.40f,
+        .metallic = 0.0f,
+        .emissiveF0 = 2.2f,
+        .flags = MATERIAL_FLAG_EMISSIVEF0SWITCH,
+    };
+    material_pool[11] = &console_lit_material;
+    texture_pool[0] = create_monitor_texture();
+    texture_pool[1] = texture_pool[0];
+
+    GLuint shadow_fbo = 0;
+    glGenFramebuffers(1, &shadow_fbo);
+    glGenTextures(1, &shadow_map_tex);
+    glBindTexture(GL_TEXTURE_2D, shadow_map_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    {
+        const float border[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadow_map_tex, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    RenderTarget scene_rt = {0};
+    RenderTarget monitor_scene_rt = {0};
+    RenderTarget monitor_display_rt = {0};
+    ensure_render_target(&scene_rt, win_w, win_h, GL_RGBA16F, 1, 0);
+    ensure_render_target(&monitor_scene_rt, 512, 288, GL_RGBA16F, 1, 0);
+    ensure_render_target(&monitor_display_rt, 512, 288, GL_RGBA8, 0, 0);
+    texture_pool[1] = monitor_display_rt.color_tex;
 
     //Skybox generation
     float skyboxVertices[] = {
@@ -599,6 +1236,8 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     glBindVertexArray(0);
 
+    glGenVertexArrays(1, &fullscreen_vao);
+
 
     //Ship
     Mesh spaceship;
@@ -634,6 +1273,174 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         .flags = OBJ_FLAG_VISIBLE,
     };
 
+    Mesh monitor_bezel_mesh = {0};
+    make_panel_mesh(&monitor_bezel_mesh, 1.32f, 0.86f, 4);
+    upload_mesh(&monitor_bezel_mesh);
+    mesh_pool[5] = &monitor_bezel_mesh;
+
+    Mesh monitor_screen_mesh = {0};
+    make_panel_mesh(&monitor_screen_mesh, 1.12f, 0.64f, 5);
+    upload_mesh(&monitor_screen_mesh);
+    mesh_pool[6] = &monitor_screen_mesh;
+
+    Mesh monitor_glass_mesh = {0};
+    make_panel_mesh(&monitor_glass_mesh, 1.20f, 0.72f, 6);
+    upload_mesh(&monitor_glass_mesh);
+    mesh_pool[7] = &monitor_glass_mesh;
+
+    Object monitor_bezel = {
+        .scale = {0.5f, 0.5f, 0.5f},
+        .mesh_id = 5,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS,
+    };
+    Object monitor_screen = {
+        .scale = {0.5f, 0.5f, 0.5f},
+        .mesh_id = 6,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS,
+    };
+    Object monitor_glass = {
+        .scale = {0.5f, 0.5f, 0.5f},
+        .mesh_id = 7,
+        .flags = OBJ_FLAG_VISIBLE,
+    };
+
+    Mesh shadow_pad_mesh = {0};
+    make_panel_mesh(&shadow_pad_mesh, 1.9f, 1.9f, 7);
+    upload_mesh(&shadow_pad_mesh);
+    mesh_pool[8] = &shadow_pad_mesh;
+
+    Mesh shadow_block_mesh = {0};
+    init_mesh(&shadow_block_mesh, 8, 36);
+    make_box(&shadow_block_mesh, (Vec3){-0.35f, -0.35f, -0.35f}, (Vec3){0.35f, 0.35f, 0.35f});
+    shadow_block_mesh.material_id = 8;
+    upload_mesh(&shadow_block_mesh);
+    mesh_pool[9] = &shadow_block_mesh;
+
+    Object shadow_pad = {
+        .position = {-2.8f, -2.05f, -8.5f},
+        .rotation = quat_axis_angle(1.0f, 0.0f, 0.0f, -90.0f * DEG2RAD),
+        .scale = {1.0f, 1.0f, 1.0f},
+        .mesh_id = 8,
+        .flags = OBJ_FLAG_VISIBLE,
+    };
+    Object shadow_block = {
+        .position = {-2.3f, -1.1f, -8.0f},
+        .rotation = {0.0f, 0.0f, 0.0f, 1.0f},
+        .scale = {0.9f, 1.5f, 0.9f},
+        .mesh_id = 9,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS,
+    };
+
+    Mesh demo_hull_mesh = {0};
+    init_mesh(&demo_hull_mesh, 24, 36);
+    make_box(&demo_hull_mesh, (Vec3){-1.0f, -0.35f, -1.4f}, (Vec3){1.0f, 0.35f, 1.4f});
+    demo_hull_mesh.material_id = 9;
+    upload_mesh(&demo_hull_mesh);
+    mesh_pool[10] = &demo_hull_mesh;
+
+    Mesh demo_nose_mesh = {0};
+    init_mesh(&demo_nose_mesh, 24, 36);
+    make_box(&demo_nose_mesh, (Vec3){-0.55f, -0.18f, -0.55f}, (Vec3){0.55f, 0.18f, 0.55f});
+    demo_nose_mesh.material_id = 9;
+    upload_mesh(&demo_nose_mesh);
+    mesh_pool[11] = &demo_nose_mesh;
+
+    Mesh demo_panel_mesh = {0};
+    make_panel_mesh(&demo_panel_mesh, 0.86f, 0.62f, 4); // matte console, not a mirror
+    upload_mesh(&demo_panel_mesh);
+    mesh_pool[12] = &demo_panel_mesh;
+
+    Object demo_hull = {
+        .scale = {1.1f, 1.0f, 1.0f},
+        .mesh_id = 10,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS,
+    };
+    Object demo_spine = {
+        .scale = {0.55f, 0.42f, 0.72f},
+        .mesh_id = 11,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS,
+    };
+    Object demo_left_panel = {
+        .scale = {0.7f, 0.7f, 1.0f},
+        .mesh_id = 12,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS | OBJ_FLAG_HIDE_IN_REFLECTION,
+    };
+    Object demo_right_panel = {
+        .scale = {0.7f, 0.7f, 1.0f},
+        .mesh_id = 12,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS | OBJ_FLAG_HIDE_IN_REFLECTION,
+    };
+    Mesh console_mesh = {0};
+    mesh_build(&console_mesh, MESH_CONSOLE, MESH_LIB);
+    upload_mesh(&console_mesh);
+    mesh_pool[13] = &console_mesh;
+
+    Object console = {
+        .scale = {1.0f, 1.0f, 1.0f},
+        .mesh_id = 13,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS | OBJ_FLAG_HIDE_IN_REFLECTION,
+    };
+
+    Object demo_center_panel = {
+        .scale = {0.58f, 0.48f, 1.0f},
+        .mesh_id = 12,
+        .flags = OBJ_FLAG_VISIBLE | OBJ_FLAG_CAST_SHADOWS | OBJ_FLAG_HIDE_IN_REFLECTION,
+    };
+    typedef struct { Object* obj; Vec3 off; Quat local; } CockpitPart;
+    const Quat q_ident = {0, 0, 0, 1};
+    const Quat q_console = quat_axis_angle(1, 0, 0, -35.0f * DEG2RAD);
+    const Quat q_screen  = quat_axis_angle(1, 0, 0, -15.0f * DEG2RAD);
+    const Quat q_lpanel  = quat_mul(quat_axis_angle(0, 1, 0,  42.0f * DEG2RAD), q_screen);
+    const Quat q_rpanel  = quat_mul(quat_axis_angle(0, 1, 0, -42.0f * DEG2RAD), q_screen);
+    const CockpitPart cockpit[] = {
+        { &demo_hull,         {  0.00f, -1.15f, -0.50f }, q_ident },
+        { &demo_spine,        {  0.00f,  0.80f,  0.20f }, q_ident },
+        { &demo_left_panel,   { -0.95f, -0.35f, -0.85f }, q_lpanel },
+        { &demo_right_panel,  {  0.95f, -0.35f, -0.85f }, q_rpanel },
+        { &console,           {  0.00f, -0.66f, -1.02f }, q_console },
+        { &monitor_bezel,     {  0.00f, -0.28f, -1.15f }, q_screen },
+        { &monitor_screen,    {  0.00f, -0.27f, -1.14f }, q_screen },
+        { &monitor_glass,     {  0.00f, -0.26f, -1.12f }, q_screen },
+    };
+    const int cockpit_count = (int)(sizeof cockpit / sizeof cockpit[0]);
+
+    Body ship_body = {
+        .rot          = {0, 0, 0, 1},
+        .inv_mass     = 1.0f / SHIP_MASS,
+        .inv_inertia  = ship_inv_inertia,
+        .restitution  = 0.25f,      // metal into rock barely bounces
+        .friction     = 0.45f,
+        .shape        = SHAPE_SPHERES,
+        .spheres      = ship_hull,
+        .sphere_count = (int)(sizeof ship_hull / sizeof ship_hull[0]),
+    };
+
+    Body asteroid_body = {
+        .pos          = asteroid.position,
+        .rot          = {0, 0, 0, 1},
+        .inv_mass     = 0.0f,       // immovable
+        .restitution  = 0.25f,
+        .friction     = 0.60f,
+        .shape        = SHAPE_FIELD,
+        .field_radius = 5.0f,       // matches the asteroid_job radius
+    };
+
+    static const Sphere block_hull[] = {{{0, 0, 0}, 0.62f}};
+    Body block_body = {
+        .pos          = shadow_block.position,
+        .rot          = {0, 0, 0, 1},
+        .inv_mass     = 1.0f / 0.8f,
+        .inv_inertia  = {8.0f, 8.0f, 8.0f},
+        .restitution  = 0.40f,
+        .friction     = 0.35f,
+        .shape        = SHAPE_SPHERES,
+        .spheres      = block_hull,
+        .sphere_count = 1,
+    };
+
+    Body* phys_bodies[] = { &ship_body, &asteroid_body, &block_body };
+    const int phys_body_count = (int)(sizeof phys_bodies / sizeof phys_bodies[0]);
+
     //HUD
     hud_init_minimal();
 
@@ -657,7 +1464,53 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, planetFlowTex);
-    glUniform1i(glGetUniformLocation(planet_shader.id, "u_flowTex"), 0);
+    if (planet_shader.u_flow_tex_loc != -1) glUniform1i(planet_shader.u_flow_tex_loc, 0);
+
+    const Object* forward_objects[] = {
+        &asteroid,
+        &monitor_bezel,
+        &monitor_screen,
+        &monitor_glass,
+        &shadow_pad,
+        &shadow_block,
+        &demo_hull,
+        &demo_spine,
+        &demo_left_panel,
+        &demo_right_panel,
+        &demo_center_panel,
+        &console
+    };
+    const int forward_object_count = (int)(sizeof forward_objects / sizeof forward_objects[0]);
+    const Object* monitor_camera_objects[] = {
+        &asteroid,
+        &shadow_pad,
+        &shadow_block
+    };
+    const int monitor_camera_object_count = (int)(sizeof monitor_camera_objects / sizeof monitor_camera_objects[0]);
+    RenderScene main_scene = {
+        .forward_shader = &univ_shader,
+        .skybox_shader = &skybox_shader,
+        .planet_shader = &planet_shader,
+        .objects = forward_objects,
+        .object_count = forward_object_count,
+        .mesh_pool = mesh_pool,
+        .gas_planet = &gas_planet,
+        .planet_flow_tex = planetFlowTex,
+        .primitive_type = GL_TRIANGLES,
+        .ring = &gas_ring
+    };
+    RenderScene monitor_scene = {
+        .forward_shader = &univ_shader,
+        .skybox_shader = &skybox_shader,
+        .planet_shader = &planet_shader,
+        .objects = monitor_camera_objects,
+        .object_count = monitor_camera_object_count,
+        .mesh_pool = mesh_pool,
+        .gas_planet = &gas_planet,
+        .planet_flow_tex = planetFlowTex,
+        .primitive_type = GL_TRIANGLES,
+        .ring = &gas_ring
+    };
 
 
 
