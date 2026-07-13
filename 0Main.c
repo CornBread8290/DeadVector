@@ -919,9 +919,41 @@ GLADapiproc APIENTRY glad_opengl_loader(const char *name) {
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-// ReSharper disable once CppDFAConstantFunctionResult
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+typedef struct { Vec3 pos; Vec3 dir; } Thruster;
+static const Thruster rcs_ports[] = {
+    {{ 0.00f,  0.52f, -1.85f}, { 0.0f,  1.0f, 0.0f}},
+    {{ 0.00f, -0.52f, -1.85f}, { 0.0f, -1.0f, 0.0f}},
+    {{ 0.72f,  0.00f, -1.85f}, { 1.0f,  0.0f, 0.0f}},
+    {{-0.72f,  0.00f, -1.85f}, {-1.0f,  0.0f, 0.0f}},
+    {{ 0.00f,  0.52f,  1.55f}, { 0.0f,  1.0f, 0.0f}},
+    {{ 0.00f, -0.52f,  1.55f}, { 0.0f, -1.0f, 0.0f}},
+    {{ 0.72f,  0.00f,  1.55f}, { 1.0f,  0.0f, 0.0f}},
+    {{-0.72f,  0.00f,  1.55f}, {-1.0f,  0.0f, 0.0f}},
+    // wingtip pairs: pure roll couples
+    {{ 1.45f,  0.00f,  0.10f}, { 0.0f,  1.0f, 0.0f}},
+    {{-1.45f,  0.00f,  0.10f}, { 0.0f, -1.0f, 0.0f}},
+    {{ 1.45f,  0.00f,  0.10f}, { 0.0f, -1.0f, 0.0f}},
+    {{-1.45f,  0.00f,  0.10f}, { 0.0f,  1.0f, 0.0f}},
+};
+#define RCS_PORT_COUNT ((int)(sizeof rcs_ports / sizeof rcs_ports[0]))
+#define RCS_THRUST 0.55f   // per-nozzle thrust
+#define MAIN_THRUST 6.0f
+#define IMPACT_SOUND_THRESHOLD 0.9f
 
+static const Sphere ship_hull[] = {
+    {{0.0f, -0.25f, -1.35f}, 0.80f},
+    {{0.0f, -0.25f,  0.00f}, 1.00f},
+    {{0.0f, -0.25f,  1.25f}, 0.90f},
+};
+
+#define SHIP_MASS 2.0f
+static const Vec3 ship_inv_inertia = {1.0f / 2.83f, 1.0f / 4.17f, 1.0f / 1.67f};
+
+static Vec3 rcs_torque(const Thruster* t){
+    return vec3_cross(t->pos, vec3_invert(t->dir));
+}
+
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
     // Register and create window
     WNDCLASS wc = { 0 };
     wc.lpfnWndProc = WindowProc;
@@ -1541,14 +1573,37 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         if (GetAsyncKeyState('Q') & 0x8000) torque.z += 1.0f;
         if (GetAsyncKeyState('E') & 0x8000) torque.z -= 1.0f;
 
-        angVel = vec3_add(angVel, vec3_scale(torque, dt));
-        Quat wQuat = { angVel.x, angVel.y, angVel.z, 0.0f };
-        Quat delta = quat_mul(rot, wQuat);
-        rot.x += delta.x * 0.5f * dt;
-        rot.y += delta.y * 0.5f * dt;
-        rot.z += delta.z * 0.5f * dt;
-        rot.w += delta.w * 0.5f * dt;
-        rot = quat_normalize(rot);
+        Vec3 speaker_pos = vec3_add(pos, quat_rotate_vec3(rot, speaker_off));
+        {
+            int f_down = (GetAsyncKeyState('F') & 0x8000) != 0;
+            if (f_down && !flashlight_prev) {
+                flashlight_on = !flashlight_on;
+                monitor_text = flashlight_on ? "LIGHTS ENGAGED." : "LIGHTS OUT.";
+                speech_voice = speak_at(flashlight_on ? PH_LIGHTS : PH_LIGHTS_OUT, speaker_pos);
+            }
+            flashlight_prev = f_down;
+        }
+        game_time += dt;
+        if (!said_hello && game_time > 1.5f) {
+            said_hello = 1;
+            monitor_text = "HELLO, WORLD!";
+            speech_voice = speak_at(PH_HELLO, speaker_pos);
+        }
+        if (speech_voice >= 0) snd_move(speech_voice, speaker_pos);
+
+        int  rcs_firing[RCS_PORT_COUNT] = {0};
+        Vec3 net_torque = {0};
+        if (vec3_dot(torque, torque) > 0.0f) {
+            Vec3 want = vec3_normalize(torque);
+            for (int i = 0; i < RCS_PORT_COUNT; ++i) {
+                Vec3 t = rcs_torque(&rcs_ports[i]);
+                if (vec3_dot(vec3_normalize(t), want) > 0.35f) {
+                    rcs_firing[i] = 1;
+                    net_torque = vec3_add(net_torque, vec3_scale(t, RCS_THRUST));
+                }
+            }
+        }
+        ship_body.torque = quat_rotate_vec3(rot, net_torque);
 
         if (GetAsyncKeyState('R') & 0x8000) {
             //pos = (Vec3){0, 0, 0};
@@ -1571,12 +1626,98 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   dir.y += 1.0f;
         if (GetAsyncKeyState(VK_CONTROL) & 0x8000) dir.y -= 1.0f;
 
-        Vec3 worldThrust = quat_rotate_vec3(rot, dir);
-        vel = vec3_add(vel, vec3_scale(worldThrust, thrust));
-        pos = vec3_add(pos, vec3_scale(vel, dt));
+        ship_body.force = vec3_scale(quat_rotate_vec3(rot, dir), MAIN_THRUST);
 
-        // CAMERA
-        Quat viewQuat = quat_conjugate(rot);
+        ship_body.pos = pos; ship_body.vel = vel;
+        ship_body.rot = rot; ship_body.angVel = angVel;
+
+        float impact = phys_step(phys_bodies, phys_body_count, dt);
+
+        pos = ship_body.pos; vel = ship_body.vel;
+        rot = ship_body.rot; angVel = ship_body.angVel;
+
+        shadow_block.position = block_body.pos;
+        shadow_block.rotation = block_body.rot;
+
+        if (impact > IMPACT_SOUND_THRESHOLD) {
+            snd_play_at(SND_GUN, 0.35f, 0.9f, 0, pos);
+            monitor_text = "HULL CONTACT";
+        }
+
+        int thrusting = dir.x != 0.0f || dir.y != 0.0f || dir.z != 0.0f;
+        Vec3 engine_pos = vec3_add(pos, quat_rotate_vec3(rot, (Vec3){0.0f, 0.0f, 3.0f}));
+        if (thrusting && engine_voice < 0)
+            engine_voice = snd_play_at(SND_ENGINE, 1.0f, 0.7f, 0, engine_pos);
+        if (engine_voice >= 0) {
+            snd_move(engine_voice, engine_pos);
+            if (!thrusting) { snd_stop(engine_voice); engine_voice = -1; }
+        }
+        {
+            int fire = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            if (fire && !fire_prev) {
+                snd_play_at(SND_GUN, 1.0f, 0.8f, 0,
+                            vec3_add(pos, quat_rotate_vec3(rot, (Vec3){0.6f, -0.4f, -2.0f})));
+            }
+            fire_prev = fire;
+        }
+
+        Volume volumes[RCS_PORT_COUNT + 3];
+        int volume_count = 0;
+
+        for (int i = 0; i < RCS_PORT_COUNT && volume_count < (int)(sizeof volumes / sizeof volumes[0]); ++i) {
+            if (!rcs_firing[i]) continue;
+            volumes[volume_count++] = (Volume){
+                .origin    = vec3_add(pos, quat_rotate_vec3(rot, rcs_ports[i].pos)),
+                .axis      = quat_rotate_vec3(rot, rcs_ports[i].dir),
+                .tint      = {0.72f, 0.84f, 1.00f},   // cold gas, faintly blue
+                .length    = 1.5f,
+                .radius    = 0.055f,
+                .density   = 2.6f,
+                .intensity = 0.9f,
+                .seed      = (float)i * 7.31f,
+                .type      = VOL_RCS,
+            };
+        }
+
+        if (dir.z < 0.0f) {
+            for (int i = 0; i < 2; ++i) {
+                float x = i ? 0.42f : -0.42f;
+                volumes[volume_count++] = (Volume){
+                    .origin    = vec3_add(pos, quat_rotate_vec3(rot, (Vec3){x, -0.10f, 2.30f})),
+                    .axis      = quat_rotate_vec3(rot, (Vec3){0.0f, 0.0f, 1.0f}),
+                    .tint      = {1.00f, 0.86f, 0.72f},
+                    .length    = 5.2f,
+                    .radius    = 0.20f,
+                    .density   = 3.4f,
+                    .intensity = 4.5f,
+                    .seed      = 3.7f + (float)i * 19.4f,
+                    .type      = VOL_PLUME,
+                };
+            }
+        }
+
+        volumes[volume_count++] = (Volume){   // burning wreck on the asteroid
+            .origin    = {1.4f, 3.1f, -38.0f},
+            .axis      = {0.0f, 1.0f, 0.0f},
+            .tint      = {1.00f, 0.72f, 0.44f},
+            .length    = 3.4f,
+            .radius    = 0.62f,
+            .density   = 1.7f,
+            .intensity = 2.6f,
+            .seed      = 41.9f,
+            .type      = VOL_FIRE,
+        };
+
+        // Cockpit follows the ship rigidly
+        for (int i = 0; i < cockpit_count; ++i) {
+            cockpit[i].obj->position = vec3_add(pos, quat_rotate_vec3(rot, cockpit[i].off));
+            cockpit[i].obj->rotation = quat_mul(rot, cockpit[i].local);
+        }
+        // CAMERA: ship orientation composed with mouse head-look
+        Quat headQuat = quat_from_euler(view.y, view.x);
+        Quat camQuat = quat_mul(rot, headQuat);
+        Quat viewQuat = quat_conjugate(camQuat);
+        snd_listener(pos, camQuat);
         quat_to_matrix(&viewQuat, cview);      // cview = R (temporary)
 
         Vec3 inv_pos = vec3_invert(pos);
