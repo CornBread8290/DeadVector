@@ -40,7 +40,7 @@ float beltBaseAt(vec2 uv){
 float beltShear(vec2 uv, vec2 texel){
     float up = beltBaseAt(uv + vec2(0.0, texel.y));
     float dn = beltBaseAt(uv - vec2(0.0, texel.y));
-    return 0.5 * (up - dn) / texel.y;               // ∂belt/∂v
+    return 0.5 * (up - dn) / texel.y;               // d(belt)/d(v)
 }
 
 void main(){
@@ -52,10 +52,10 @@ void main(){
     float baseBelt = beltBaseAt(uv);
 
     float lat = (uv.y - 0.5) * 2.0;                 // -1..1
-    float jetsPerHemisphere = 7.0;                  // ≈14 total bands
+    float jetsPerHemisphere = 7.0;                  // approx 14 total bands
     float dirSign = sign(sin(lat * 3.14159265 * jetsPerHemisphere));
     // stronger zonal near equator, taper to poles
-    float zonalAmp = mix(0.65, 0.20, smoothstep(0.0, 0.9, abs(lat))); // 0.65@eq → 0.2@poles
+    float zonalAmp = mix(0.65, 0.20, smoothstep(0.0, 0.9, abs(lat))); // 0.65@eq -> 0.2@poles
     vec2  zonal = vec2(dirSign, 0.0) * zonalAmp;
 
     vec2 p  = uv * 6.0;

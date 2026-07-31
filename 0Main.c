@@ -1098,19 +1098,23 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
         .flags    = OBJ_FLAG_VISIBLE
     };
 
+    const Ring gas_ring = {
+        .centre   = {0, 0, 5000},
+        .axis     = {0.22f, 0.96f, 0.14f},
+        .planet_r = 1000.0f,
+        .inner_r  = 1350.0f,
+        .outer_r  = 2400.0f,
+        .tau      = 1.9f,
+    };
+
     // Build shaders
-    ShaderProgram test_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/asteroid.frag");
     ShaderProgram skybox_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/skybox.frag");
-    skybox_shader.u_view_loc = glGetUniformLocation(skybox_shader.id, "u_view");
-    skybox_shader.u_projection_loc = glGetUniformLocation(skybox_shader.id, "u_projection");
-
     ShaderProgram univ_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/univ.frag");
-
+    ShaderProgram shadow_shader = create_shader_program_from_files("shaders/shadow.vert", "shaders/shadow.frag");
+    ShaderProgram post_shader = create_shader_program_from_files("shaders/post.vert", "shaders/post.frag");
+    ShaderProgram monitor_post_shader = create_shader_program_from_files("shaders/post.vert", "shaders/monitor_post.frag");
     ShaderProgram planet_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/planet.frag");
-    set_common_matrices(&test_shader, cview, projection);
-    set_common_matrices(&skybox_shader, cview, projection);
-    set_common_matrices(&planet_shader, cview, projection);
-    set_common_matrices(&univ_shader, cview, projection);
+    vol_init();
 
     const static Material test_material = {
         .albedo = {1.0f, 0.15f, 0.45f, 1.0f},
@@ -1616,6 +1620,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
             glEnable(GL_LINE_SMOOTH);
 
             univ_shader = create_shader_program_from_files("shaders/unified.vert", "shaders/univ.frag");
+            shadow_shader = create_shader_program_from_files("shaders/shadow.vert", "shaders/shadow.frag");
+            post_shader = create_shader_program_from_files("shaders/post.vert", "shaders/post.frag");
+            monitor_post_shader = create_shader_program_from_files("shaders/post.vert", "shaders/monitor_post.frag");
+            vol_init();
         }
         // TRANSLATION INPUT
         Vec3 dir = {0};

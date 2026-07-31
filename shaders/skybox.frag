@@ -107,7 +107,5 @@ void main(){
     float scatter = smoothstep(0.9975, 1.0, vnoise(vec2(dir.y, dir.x)*180.0 + 9.0));
     col += vec3(0.9,0.95,1.0) * SCATTER_STRENGTH * scatter * (1.0 - smoothstep(0.0, 1.0, band));
 
-    // Tonemap
-    col = col / (1.0 + col);
-    FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    FragColor = vec4(max(col, vec3(0.0)), 1.0);
 }
