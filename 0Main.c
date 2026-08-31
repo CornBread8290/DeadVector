@@ -1734,72 +1734,149 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
         mat4_multiply(cview, cview, tmp);      // cview = R * T
 
+        Vec3 render_cam_pos = pos;
+        dbg_freecam_update(dt, pos, quat_rotate_vec3(camQuat, (Vec3){0.0f, 0.0f, -1.0f}));
+        dbg_freecam_apply(cview, &render_cam_pos);
+
         mat4_perspective(projection, 90.0f, aspectRatio, 0.1f, 10000.0f);
-
-
-        glViewport(0, 0, win_w, win_h);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glDepthMask(GL_FALSE);
-        glDepthFunc(GL_LEQUAL);
-        glUseProgram(skybox_shader.id);
-        glUniform1i(glGetUniformLocation(skybox_shader.id,"u_is_skybox"), 1);
-
-        // Remove translation from view
-        Mat4 view_no_translate;
-        memcpy(view_no_translate, cview, sizeof(Mat4));
-        view_no_translate[12] = view_no_translate[13] = view_no_translate[14] = 0.0f;
-
-        glUniformMatrix4fv(skybox_shader.u_view_loc, 1, GL_FALSE, view_no_translate);
-        glUniformMatrix4fv(skybox_shader.u_projection_loc, 1, GL_FALSE, projection);
-
-        glBindVertexArray(skybox_vao);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-        glDepthFunc(GL_LESS); // Restore for normal geometry
-        glDepthMask(GL_TRUE);
+        ensure_render_target(&scene_rt, win_w, win_h, GL_RGBA16F, 1, 0);
 
         Vec3 light_dir = vec3_normalize((Vec3){2.0f,-4.0f,1.0f});
-        Mesh* a_mesh = mesh_pool[asteroid.mesh_id];
-        const Material* a_mat = (a_mesh && a_mesh->material_id >= 0 && a_mesh->material_id < MAX_MATERIALS)
-                                ? material_pool[a_mesh->material_id] : 0;
-        uint32_t a_flags = (a_mesh ? a_mesh->flags : 0) | (a_mat ? a_mat->flags : 0);
-
-        set_common_uniforms(&univ_shader, cview, projection, pos, light_dir, a_mat, a_flags);
-        glPointSize(1.0f);
-        draw_object(&asteroid, &univ_shader, mesh_pool, GL_TRIANGLES);
-
-        glUseProgram(planet_shader.id);
-        glUniform1i(glGetUniformLocation(planet_shader.id,"u_is_skybox"), 0);
-
-        glUniformMatrix4fv(planet_shader.u_view_loc, 1, GL_FALSE, cview);
-        glUniformMatrix4fv(planet_shader.u_projection_loc, 1, GL_FALSE, projection);
-        glUniformMatrix4fv(planet_shader.u_light_space_matrix_loc, 1, GL_FALSE, light_space_matrix);
-
-        glUniform3f(glGetUniformLocation(planet_shader.id, "u_light_dir"), light_dir.x, light_dir.y, light_dir.z);
-        glUniform3f(glGetUniformLocation(planet_shader.id, "u_view_pos"), pos.x, pos.y, pos.z);
-        mat4_perspective(projection, 45.0f, aspectRatio, 0.1f, 10000.0f);
-        draw_object(&gas_planet, &planet_shader, mesh_pool, GL_TRIANGLES);
-
-        //glDisable(GL_DEPTH_TEST);
-
-        char fpschar[16];
-        //unsigned fps = fps > (unsigned)(1.0f / dt) ? fps : (unsigned)(1.0f / dt);
-        unsigned fps = (unsigned )(1.0f / dt);
-
-        *(unsigned*)fpschar = 0x20535046; //FPS
-        fpschar[4] = ':'; fpschar[5] = ' ';
-        u32_to_str(fpschar + 6, fps);
-
-        if (frame == 0){
-            hud_clear();
-            hud_draw_string(2, 2, fpschar);
+        Vec3 camera_forward = quat_rotate_vec3(rot, (Vec3){0.0f, 0.0f, -1.0f});
+        Vec3 camera_up = quat_rotate_vec3(rot, (Vec3){0.0f, 1.0f, 0.0f});
+        SceneLight lights[MAX_FORWARD_LIGHTS] = {
+            {
+                .type = LIGHT_DIRECTIONAL,
+                .direction = light_dir,
+                .color = {1.0f, 0.985f, 0.95f},
+                .intensity = 1.0f,
+                .range = 0.0f,
+                .inner_cos = 1.0f,
+                .outer_cos = 1.0f,
+                .casts_shadow = 1
+            }
+        };
+        int light_count = 1;
+        if (flashlight_on && light_count < MAX_FORWARD_LIGHTS) {
+            lights[light_count++] = (SceneLight){
+                .type = LIGHT_SPOT,
+                .position = pos,
+                .direction = camera_forward,
+                .color = {1.0f, 0.97f, 0.90f},
+                .intensity = 5.0f,
+                .range = 42.0f,
+                .inner_cos = cosf(10.0f * DEG2RAD),
+                .outer_cos = cosf(16.0f * DEG2RAD),
+                .casts_shadow = 0
+            };
         }
-        //hud_draw_string(2, 2, "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~");
+        if (light_count < MAX_FORWARD_LIGHTS) { // cool spill from the monitor
+            lights[light_count++] = (SceneLight){
+                .type = LIGHT_POINT,
+                .position = monitor_screen.position,
+                .color = {0.35f, 0.75f, 1.0f},
+                .intensity = 1.6f,
+                .range = 5.0f,
+                .casts_shadow = 0
+            };
+        }
+        Vec3 shadow_focus = vec3_add(pos, vec3_scale(camera_forward, 18.0f));
+        build_directional_light_matrix(light_space_matrix, light_dir, shadow_focus);
 
+        glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+        glBindFramebuffer(GL_FRAMEBUFFER, shadow_fbo);
+        glEnable(GL_DEPTH_TEST);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glCullFace(GL_FRONT);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(2.5f, 4.0f);
+        glUseProgram(shadow_shader.id);
+        glUniformMatrix4fv(shadow_shader.u_light_space_matrix_loc, 1, GL_FALSE, light_space_matrix);
+        render_shadow_casters(forward_objects,
+                              forward_object_count,
+                              &shadow_shader,
+                              mesh_pool,
+                              GL_TRIANGLES);
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glCullFace(GL_BACK);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        main_scene.volumes = volumes;
+        main_scene.volume_count = volume_count;
+        monitor_scene.volumes = &volumes[volume_count - 1];
+        monitor_scene.volume_count = 1;
+
+        // Fixed exterior camera watching the asteroid
+        Vec3 monitor_camera_pos = {16.0f, 7.0f, -24.0f};
+        Vec3 monitor_camera_target = {0.0f, 0.0f, -40.0f};
+        Vec3 monitor_camera_up = {0.0f, 1.0f, 0.0f};
+        Mat4 monitor_view, monitor_projection;
+        mat4_lookat(monitor_view, monitor_camera_pos, monitor_camera_target, monitor_camera_up);
+        mat4_perspective(monitor_projection,
+                         58.0f,
+                         (float)monitor_scene_rt.width / (float)monitor_scene_rt.height,
+                         0.1f,
+                         10000.0f);
+        RenderView monitor_world_view = {
+            .view = monitor_view,
+            .projection = monitor_projection,
+            .camera_pos = monitor_camera_pos,
+            .light_dir = light_dir,
+            .lights = lights,
+            .light_count = light_count,
+            .target_fbo = monitor_scene_rt.fbo,
+            .viewport_w = monitor_scene_rt.width,
+            .viewport_h = monitor_scene_rt.height,
+            .object_skip_flags = 0,
+            .pass_flags = RENDER_WORLD_CLEAR | RENDER_WORLD_SKYBOX | RENDER_WORLD_OPAQUE | RENDER_WORLD_PLANET | RENDER_WORLD_VOLUME,
+            .time = game_time
+        };
+        render_world_view(&monitor_scene, &monitor_world_view);
+        render_monitor_post_process(&monitor_post_shader, monitor_scene_rt.color_tex, &monitor_display_rt, game_time);
+
+        hud_clear();
+        hud_draw_string(4, 4, monitor_text);
+        draw_hud_at(0.0f, (float)(monitor_display_rt.height - 24));
+        RenderView main_opaque_view = {
+            .view = cview,
+            .projection = projection,
+            .camera_pos = render_cam_pos,
+            .light_dir = light_dir,
+            .lights = lights,
+            .light_count = light_count,
+            .target_fbo = scene_rt.fbo,
+            .viewport_w = scene_rt.width,
+            .viewport_h = scene_rt.height,
+            .object_skip_flags = 0,
+            .pass_flags = RENDER_WORLD_CLEAR | RENDER_WORLD_SKYBOX | RENDER_WORLD_OPAQUE | RENDER_WORLD_PLANET | RENDER_WORLD_VOLUME,
+            .time = game_time
+        };
+        render_world_view(&main_scene, &main_opaque_view);
+
+        RenderView main_transparent_view = main_opaque_view;
+        main_transparent_view.pass_flags = RENDER_WORLD_TRANSPARENT;
+        render_world_view(&main_scene, &main_transparent_view);
+
+        render_post_process(&post_shader, scene_rt.color_tex);
+
+        fps_acc += dt;
+        fps_frames++;
+        if (fps_acc >= 0.5f) {
+            *(unsigned*)fpschar = 0x20535046; //FPS
+            fpschar[4] = ':'; fpschar[5] = ' ';
+            u32_to_str(fpschar + 6, (unsigned)(fps_frames / fps_acc + 0.5f));
+            fps_acc = 0.0f;
+            fps_frames = 0;
+        }
+        hud_clear();
+        hud_draw_string(2, 2, fpschar);
+        {
+            char fc_hud[24];
+            dbg_freecam_hud(fc_hud);
+            if (fc_hud[0]) hud_draw_string(2, 12, fc_hud);
+        }
         draw_hud();
-        //glEnable(GL_DEPTH_TEST);
-
+        glEnable(GL_DEPTH_TEST);
         SwapBuffers(hDC);
 
         if (handle_done(hAst)) { handle_close(&hAst); upload_mesh(&asteroid_mesh); mesh_pool[1] = &asteroid_mesh; }
@@ -1839,14 +1916,29 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             return 0;
 
         case WM_MOUSEMOVE: {
-            RECT windowRect;
-            GetClientRect(hWnd, &windowRect);
-            int centerX = (windowRect.left + windowRect.right) / 2;
-            int centerY = (windowRect.top  + windowRect.bottom) / 2;
-            POINT centerScreen = {centerX, centerY};
-            ClientToScreen(hWnd, &centerScreen);
-            if (view.y > 89.9f)  view.y = 89.9f;
-            if (view.y < -89.9f) view.y = -89.9f;
+            if (GetActiveWindow() != hWnd) return 0;
+            RECT rc;
+            GetClientRect(hWnd, &rc);
+            int cx = rc.right / 2, cy = rc.bottom / 2;
+            int dx = (short)LOWORD(lParam) - cx;
+            int dy = (short)HIWORD(lParam) - cy;
+            if (dx || dy) {
+                if (dbg_freecam_mouse(dx, dy)) {
+                    POINT fc = {cx, cy};
+                    ClientToScreen(hWnd, &fc);
+                    SetCursorPos(fc.x, fc.y);
+                    return 0;
+                }
+                view.x -= dx * 0.0028f; // yaw
+                view.y -= dy * 0.0028f; // pitch
+                if (view.x >  2.6f) view.x =  2.6f; // necks don't spin
+                if (view.x < -2.6f) view.x = -2.6f;
+                if (view.y >  1.4f) view.y =  1.4f;
+                if (view.y < -1.4f) view.y = -1.4f;
+                POINT c = {cx, cy};
+                ClientToScreen(hWnd, &c);
+                SetCursorPos(c.x, c.y);
+            }
             return 0;
         }
 
@@ -1858,6 +1950,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 ShowCursor(TRUE);
                 ReleaseCapture();
             }
+
             return 0;
 
         case WM_SYSKEYDOWN:
