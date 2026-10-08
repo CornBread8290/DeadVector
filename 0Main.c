@@ -953,6 +953,11 @@ static Vec3 rcs_torque(const Thruster* t){
     return vec3_cross(t->pos, vec3_invert(t->dir));
 }
 
+// Release entry point (linked with -nostartfiles), skips the CRT startup code
+void dv_entry(void) {
+    ExitProcess(WinMain(GetModuleHandleA(NULL), NULL, NULL, SW_SHOWDEFAULT));
+}
+
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
     // Register and create window
     WNDCLASS wc = { 0 };

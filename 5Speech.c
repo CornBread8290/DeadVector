@@ -488,7 +488,7 @@ static int synth_segments(float *out, int max_samples, const Segment *seg, int c
     return pos;
 }
 
-static float speech_buf[SPEECH_MAX];
+static float* speech_buf;
 static volatile int speech_len;
 static int speech_cursor;
 static int speech_voice = -1;
@@ -513,8 +513,10 @@ int speak_at(const char* encoded, Vec3 pos) {
     speech_len = 0;
     speech_cursor = 0;
 
+    if (!speech_buf) speech_buf = (float*)malloc(sizeof(float) * SPEECH_MAX);
+    if (!speech_buf) return -1;
     if (!decode_phrase_segments(encoded, &seg, &count)) return -1;
-    memset(speech_buf, 0, sizeof speech_buf);
+    memset(speech_buf, 0, sizeof(float) * SPEECH_MAX);
     int n = synth_segments(speech_buf, SPEECH_MAX, seg, count, &robot);
     free(seg);
 

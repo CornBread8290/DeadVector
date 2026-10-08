@@ -22,15 +22,22 @@ typedef struct {
     float dl[DL_LEN]; int dw;    // mono delay line for ITD
 } SndVoice;
 
+// Heap-allocated in snd_init so the zeroed buffers don't end up in the exe
+typedef struct {
+    int16_t pcm[NUM_BLOCKS][BLOCK_FRAMES * 2];
+    float echoL[ECHO_LEN], echoR[ECHO_LEN];
+    float busL[BLOCK_FRAMES], busR[BLOCK_FRAMES];
+    float mono[BLOCK_FRAMES], dryE[BLOCK_FRAMES];
+} SndBuffers;
+
 static SndVoice voices[MAX_VOICES];
 static HWAVEOUT dev;
 static WAVEHDR hdrs[NUM_BLOCKS];
-static int16_t pcm[NUM_BLOCKS][BLOCK_FRAMES * 2];
+static SndBuffers* buf;
 static HANDLE ev, thread;
 static volatile int running;
 static Vec3 lis_pos;
 static Quat lis_rot = {0, 0, 0, 1};
-static float echoL[ECHO_LEN], echoR[ECHO_LEN];
 static int echo_w;
 static float rb0, rb1, rb2, ra1, ra2; // radio bandpass coefficients
 
@@ -56,11 +63,11 @@ static float mono_sample(SndVoice* v) {
 }
 
 static void mix_block(int16_t* out) {
-    static float busL[BLOCK_FRAMES], busR[BLOCK_FRAMES];
-    static float mono[BLOCK_FRAMES], dryE[BLOCK_FRAMES];
-    memset(busL, 0, sizeof busL);
-    memset(busR, 0, sizeof busR);
-    memset(dryE, 0, sizeof dryE);
+    float *busL = buf->busL, *busR = buf->busR, *mono = buf->mono, *dryE = buf->dryE;
+    float *echoL = buf->echoL, *echoR = buf->echoR;
+    memset(busL, 0, sizeof buf->busL);
+    memset(busR, 0, sizeof buf->busR);
+    memset(dryE, 0, sizeof buf->dryE);
 
     for (int vi = 0; vi < MAX_VOICES; ++vi) {
         SndVoice* v = &voices[vi];
@@ -144,7 +151,7 @@ static DWORD WINAPI mixer_thread(void* arg) {
         WaitForSingleObject(ev, 100);
         for (int b = 0; b < NUM_BLOCKS; ++b)
             if (hdrs[b].dwFlags & WHDR_DONE) {
-                mix_block(pcm[b]);
+                mix_block(buf->pcm[b]);
                 hdrs[b].dwFlags &= ~WHDR_DONE;
                 waveOutWrite(dev, &hdrs[b], sizeof(WAVEHDR));
             }
@@ -158,6 +165,8 @@ int snd_init(void) {
         .nSamplesPerSec = SND_RATE, .wBitsPerSample = 16,
         .nBlockAlign = 4, .nAvgBytesPerSec = SND_RATE * 4
     };
+    buf = (SndBuffers*)calloc(1, sizeof *buf);
+    if (!buf) return 0;
     ev = CreateEvent(0, FALSE, FALSE, 0);
     if (waveOutOpen(&dev, WAVE_MAPPER, &wfx, (DWORD_PTR)ev, 0, CALLBACK_EVENT) != MMSYSERR_NOERROR)
         return 0;
@@ -170,10 +179,10 @@ int snd_init(void) {
 
     running = 1;
     for (int b = 0; b < NUM_BLOCKS; ++b) {
-        hdrs[b].lpData = (LPSTR)pcm[b];
-        hdrs[b].dwBufferLength = sizeof pcm[b];
+        hdrs[b].lpData = (LPSTR)buf->pcm[b];
+        hdrs[b].dwBufferLength = sizeof buf->pcm[b];
         waveOutPrepareHeader(dev, &hdrs[b], sizeof(WAVEHDR));
-        mix_block(pcm[b]);
+        mix_block(buf->pcm[b]);
         waveOutWrite(dev, &hdrs[b], sizeof(WAVEHDR));
     }
     thread = CreateThread(0, 0, mixer_thread, 0, 0, 0);
@@ -185,6 +194,7 @@ void snd_shutdown(void) {
     if (thread) { WaitForSingleObject(thread, 500); CloseHandle(thread); }
     if (dev) { waveOutReset(dev); waveOutClose(dev); dev = 0; }
     if (ev) CloseHandle(ev);
+    free(buf); buf = 0;
 }
 
 void snd_listener(Vec3 pos, Quat rot) { lis_pos = pos; lis_rot = rot; }
